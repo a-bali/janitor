@@ -1,0 +1,225 @@
+<html>
+	<head>
+		<style>
+		body { font-family: Arial} 
+		.modal {
+    		position: fixed;
+    		top: 0;
+    		left: 0;
+    		bottom: 0;
+    		right: 0;
+    		display: none;
+    		overflow: auto;
+    		background-color: #000000;
+    		background-color: rgba(0, 0, 0, 0.7);
+    		z-index: 9999;
+		}
+
+		.modal-window {
+    		position: relative;
+    		background-color: #FFFFFF;
+    		width: 50%;
+    		margin: 10% auto;
+    		padding: 20px;
+		}
+		.open {
+    		display: block;
+		}
+		table {
+			width: 100%;
+			border-collapse: collapse			
+		}
+		tr, th, td {
+			border: 1px solid black
+		}
+		th {
+			background-color: gray
+		}
+		td.status0 { background-color: green }
+		td.status1 { background-color: yellow }
+		td.status2 { background-color: red }
+		.relatime  { color: grey; font-size: 80% }
+		.footer    { font-size: 80% }
+		.log 	   { font-size: 70% }
+		.logts     { white-space: nowrap }
+		a, a:visited, a:hover, a:active { color: blue; }
+		</style>
+		<script>
+			document.addEventListener('click', function (e) {
+		    	e = e || window.event;
+    			var target = e.target || e.srcElement;
+
+    			if (target.hasAttribute('data-toggle') && target.getAttribute('data-toggle') == 'modal') {
+        			if (target.hasAttribute('data-target')) {
+            			var m_ID = target.getAttribute('data-target');
+            			document.getElementById(m_ID).classList.add('open');
+            			e.preventDefault();
+        			}
+    			}
+
+ 		   	if ((target.hasAttribute('data-dismiss') && target.getAttribute('data-dismiss') == 'modal') || target.classList.contains('modal')) {
+        			var modal = document.querySelector('[class="modal open"]');
+        			modal.classList.remove('open');
+        			e.preventDefault();
+    			}
+			}, false);
+
+			function submitForm(f) {
+				if (confirm("Really delete entry?")) {
+					document.getElementById(f).submit();
+				}
+			}
+		</script>
+	</head>
+	<body>
+		<h1>SENTINEL</h2>
+		{{ if .MQTT }}
+		<h3>MQTT targets</h3>
+		<table>
+			<tr>
+				<th>MQTT topic</th>
+				<th>First seen</th>
+				<th>Last seen</th>
+				<th>Last payload</th>
+				<th>History length</th>
+				<th>Total samples received</th>
+				<th>Avg transmit period</th>
+				<th>Last error</th>
+				<th>Total errors</th>
+				<th>Status</th>
+			</tr>
+
+			{{ range $topic, $value := .MQTT}}
+			<tr>
+				<td><div>
+					<form id="delete_mqtt_{{ $value.Id }}" method="post" action="/delete">
+						<input type="hidden" name="type" value="mqtt">
+						<input type="hidden" name="name" value="{{ $topic }}">
+					</form>
+					{{ $topic }}
+					<a href="javascript:submitForm('delete_mqtt_{{ $value.Id }}')">x</a>
+				</div>
+				</td>
+				<td>
+					{{ $value.FirstSeen.Format "2006-01-02 15:04:05" }}
+					<br />
+					<span class="relatime">({{ relaTime $value.FirstSeen }} ago)</span>
+				</td>
+				<td>
+					{{ $value.LastSeen.Format "2006-01-02 15:04:05" }}
+					<br />
+					<span class="relatime">({{ relaTime $value.LastSeen }} ago)</span>
+				</td>
+				<td> {{ $value.LastPayload }}</td>
+				<td> {{ len $value.History }} 
+					<a href="#" data-target="modal{{$value.Id}}" data-toggle="modal">+</a>
+					<div id="modal{{$value.Id}}" class="modal">
+						<div class="modal-window">
+							<table class="log">
+								{{ range $idx, $item := $value.History }}
+								<tr>
+									<td class="logts">
+											{{ $item.Timestamp.Format "2006-01-02 15:04:05"}}
+									</td>
+									<td>
+										<strong>{{ $item.Payload }}</strong>
+									</td>
+								</tr>
+								{{ end }}
+							</table>
+						</div>
+					</div>
+				</td>
+				<td> {{ $value.Samples }} </td>
+				<td> {{ printf "%.2f" $value.AvgTransmit }} </td>
+				<td> 
+					{{ if not $value.LastError.IsZero }}
+					{{ $value.LastError.Format "2006-01-02 15:04:05" }}
+					<br />
+					<span class="relatime">({{ relaTime $value.LastError }} ago)</span>
+					{{ end }}
+				</td>
+				<td> {{ $value.Alerts }} </td>
+				<td class="status{{ $value.Status }}"></td>
+			</tr>
+			{{ end }}
+		</table>
+		{{ end }}
+		
+		{{ if .Ping}}
+		<h3>Ping targets</h3>
+		<table>
+			<tr>
+				<th>Host name</th>
+				<th>Address</th>
+				<th>Last OK</th>
+				<th>Last error</th>
+				<th>Total OK packets</th>
+				<th>Total error packets</th>
+				<th>Status</th>
+			</tr>
+
+			{{ range $host, $value := .Ping }}
+			<tr>
+				<td>
+					<form id="delete_ping_{{ $value.Address }}" method="post" action="/delete">
+						<input type="hidden" name="type" value="ping">
+						<input type="hidden" name="name" value="{{ $host }}">
+					</form>
+					{{ $host }}
+					<a href="javascript:submitForm('delete_ping_{{ $value.Address }}')">x</a>
+				</td>
+				<td> {{ $value.Address }} </td>
+				<td>
+					{{ if not $value.LastOK.IsZero }}
+					{{ $value.LastOK.Format "2006-01-02 15:04:05" }}
+					<br />
+					<span class="relatime">({{ relaTime $value.LastOK }} ago)</span>
+					{{ end }}</td>
+				<td>
+					{{ if not $value.LastError.IsZero }}
+					{{ $value.LastError.Format "2006-01-02 15:04:05" }}
+					<br />
+					<span class="relatime">({{ relaTime $value.LastError }} ago)</span>
+					 {{ end }}</td>
+				<td> {{ $value.TotalOK }}</td>
+				<td> {{ $value.TotalError }}</td>
+				<td class="status{{ $value.Status }}"></td>
+			</tr>
+			{{ end }}
+			</table>
+		{{ end }}
+		<p class="footer">
+			Generated at {{ .Timestamp.Format "2006-01-02 15:04:05" }}.
+			<br />
+			Running since {{ .Uptime.Format "2006-01-02 15:04:05" }}
+			<span class="relatime">({{ relaTime .Uptime }} ago)</span>.
+			<br />
+			<a href="#" data-target="modal_log" data-toggle="modal">Log</a>
+			<a href="#" data-target="modal_config" data-toggle="modal">Config</a>
+			<a href="/reload_config">Reload config</a>
+			<a href="javascript:window.location.reload()">Refresh</a>
+			
+			<div id="modal_config" class="modal">
+				<div class="modal-window">
+					{{ .Config }}
+				</div>
+			</div>
+
+			<div id="modal_log" class="modal">
+				<div class="modal-window">
+					<table class="log">
+						{{ range $e := .LogHistory }}
+						<tr>
+							<td class="logts">{{ $e.Timestamp.Format "2006-01-02 15:04:05" }}</td>
+							<td>{{ $e.Entry }}</td>
+						</tr>
+						{{ end }}
+					</table>
+				</div>
+			</div>
+
+			
+		</p>
+	</body>
+</html>

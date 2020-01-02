@@ -1,0 +1,35 @@
+mqtt:
+  server: openwrt.lan
+  port: 1883
+  topic: 
+   - "/sensors/#"
+   - "/stats/#"
+
+history: 10
+
+debug: true
+
+web:
+  port: 8182
+
+telegram:
+  token: "INSERTYOUR:TOKEN"
+  chat: INSERTYOURCHATID
+
+pinginterval: 5
+
+ping:
+  - name: openwrt
+    address: openwrt.lan
+  - name: Cam Inside
+    address: cam_inside.lan
+  - name: Cam Outside
+    address: cam_outside.lan
+  - name: ESP Kitchen
+    address: esp-kitchen-0.lan 
+  - name: ESP Bedroom
+    address: esp-bedroom-0.lan
+  - name: ESP Outside
+    address: esp-outside-0.lan
+  
+
