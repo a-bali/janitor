@@ -18,7 +18,7 @@ Additionally, Janitor has a web interface where you can see the current status a
 
 ## Building and installing
 
-Janitor is written in Go and will compile to a single standalone binary.
+Janitor is written in Go and will compile to a single standalone binary. Janitor should compile and work both on Linux and on Windows.
 
 For compiling, first install the necessary prerequisites:
 
@@ -37,7 +37,7 @@ Then use the following commands to clone the repository and build the binary:
     $ cd janitor
     $ packr build
 
-This will create the standalone binary named `janitor` that you can copy into anywhere you like.
+This will create the standalone binary named `janitor` that you can place anywhere you like.
 
 ## Configuration and usage
 
@@ -50,7 +50,7 @@ For configuration, a YAML formatted file is required. Please use the [sample con
 * history: this variable defines the number of records to keep per MQTT topics
 * debug: this variable enables debug mode with increased logging
 
-Once you created a configuration file, janitor can be launched as follows:
+Once you created a configuration file, Janitor can be launched as follows:
 
     $ janitor path/to/your/configfile.yml
 
