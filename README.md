@@ -10,6 +10,7 @@ Janitor currently supports the following monitoring methods:
 
 Janitor currently supports the following alert methods:
 * **Telegram:** Janitor will send a message to a predefined Telegram channel.
+* **Gotify:** Janitor will send a push message to Gotify.
 
 Additionally, Janitor has a web interface where you can see the current status and historical data, remove sensors and reload the configuration file (see screenshot below).
 
@@ -44,10 +45,11 @@ This will create the standalone binary named `janitor` that you can place anywhe
 For configuration, a YAML formatted file is required. Please use the [sample configuration file](config.yml) and change it according to your needs, particularly the following blocks:
 * mqtt: this block defines the server and topics for MQTT monitoring (can be omitted)
 * ping: this block defines the hosts for ping-based monitoring (can be omitted)
-* telegram: this block defines the token and chat id for Telegram
+* telegram: this block defines the token and chat id for Telegram (can be omitted)
+* gotify: this block defines the server and token for Gotify (can be omitted)
 * pinginterval: this variable defines the frequency for ping tests in seconds
 * web: this block defines the port for the built-in web server
-* history: this variable defines the number of records to keep per MQTT topics
+* history: this variable defines the number of records to keep per MQTT topic
 * debug: this variable enables debug mode with increased logging
 
 Once you created a configuration file, Janitor can be launched as follows:

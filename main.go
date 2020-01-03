@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +29,10 @@ type Config struct {
 	Telegram struct {
 		Token string
 		Chat  int64
+	}
+	Gotify struct {
+		Token  string
+		Server string
 	}
 	MQTT struct {
 		Server   string
@@ -144,11 +149,13 @@ func loadConfig() {
 
 	debug("Loaded config: " + fmt.Sprintf("%+v", config))
 
-	tgbot, err = tgbotapi.NewBotAPI(config.Telegram.Token)
-	if err != nil {
-		panic(err)
+	if config.Telegram.Token != "" {
+		tgbot, err = tgbotapi.NewBotAPI(config.Telegram.Token)
+		if err != nil {
+			panic(err)
+		}
+		log("Connected to telegram bot")
 	}
-	log("Connected to telegram bot")
 }
 
 func startPing() {
@@ -162,7 +169,7 @@ func startPing() {
 			if ping(host.Address) {
 				debug("Ping OK for " + host.Address)
 				if e.Status == 2 {
-					telegram("✓ Ping OK for " + host.Name + ", in error since " + relaTime(e.LastError) + " ago")
+					notify("✓ Ping OK for " + host.Name + ", in error since " + relaTime(e.LastError) + " ago")
 				}
 				e.TotalOK++
 				e.LastOK = time.Now()
@@ -174,7 +181,7 @@ func startPing() {
 				} else if e.Status == 1 {
 					e.Status++
 					e.LastError = time.Now()
-					telegram("⚠ Ping ERROR for " + host.Name + ", last seen " + relaTime(e.LastOK) + " ago")
+					notify("⚠ Ping ERROR for " + host.Name + ", last seen " + relaTime(e.LastOK) + " ago")
 				}
 				e.TotalError++
 			}
@@ -268,7 +275,7 @@ func checkMQTTStatus() {
 				switch elapsed := time.Now().Sub(v.LastSeen).Seconds(); {
 				case elapsed > (v.AvgTransmit * 2):
 					if v.Status != 2 {
-						telegram(fmt.Sprintf("⚠ MQTT ERROR: %s last seen %s ago (average interval %.2fs)", topic, relaTime(v.LastSeen), v.AvgTransmit))
+						notify(fmt.Sprintf("⚠ MQTT ERROR: %s last seen %s ago (average interval %.2fs)", topic, relaTime(v.LastSeen), v.AvgTransmit))
 						v.LastError = time.Now()
 						v.Alerts++
 					}
@@ -279,7 +286,7 @@ func checkMQTTStatus() {
 
 				default:
 					if v.Status == 2 {
-						telegram(fmt.Sprintf("✓ MQTT OK for %s, in error since  %s ago", topic, relaTime(v.LastError)))
+						notify(fmt.Sprintf("✓ MQTT OK for %s, in error since  %s ago", topic, relaTime(v.LastError)))
 					}
 					v.Status = 0
 				}
@@ -341,6 +348,9 @@ func deleteWebItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func relaTime(t time.Time) string {
+	if t.IsZero() {
+		return "inf"
+	}
 	d := time.Since(t)
 
 	day := time.Minute * 60 * 24
@@ -385,6 +395,20 @@ func debug(s string) {
 }
 
 func telegram(s string) {
-	log(s)
 	tgbot.Send(tgbotapi.NewMessage(config.Telegram.Chat, s))
+}
+
+func gotify(s string) {
+	http.PostForm(config.Gotify.Server+"/message?token="+config.Gotify.Token,
+		url.Values{"message": {s}, "title": {"Janitor alert"}})
+}
+
+func notify(s string) {
+	log(s)
+	if config.Telegram.Token != "" {
+		telegram(s)
+	}
+	if config.Gotify.Token != "" {
+		gotify(s)
+	}
 }
