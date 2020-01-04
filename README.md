@@ -41,6 +41,18 @@ Then use the following commands to clone the repository and build the binary:
 
 This will create the standalone binary named `janitor` that you can place anywhere you like.
 
+### Installing with Docker
+
+You can use the supplied Dockerfile to build a container for Janitor:
+
+    $ git clone https://github.com/a-bali/janitor.git
+    $ cd janitor
+    $ docker build . -t janitor
+
+Afterwards you can use this container by mapping the config file to `/janitor/config.yml`:
+
+    $ docker run -v $(pwd)/config.yml:/janitor/config.yml -p 8080:8080 janitor
+
 ## Configuration and usage
 
 For configuration, a YAML formatted file is required. Please use the [sample configuration file](config.yml) and change it according to your needs, particularly the following blocks:
