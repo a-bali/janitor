@@ -7,12 +7,13 @@ Janitor does not aim to implement any additional functionalities, therefore is n
 Janitor currently supports the following monitoring methods:
 * **MQTT:** Janitor will subscribe to predefined MQTT topics and monitor incoming messages. An average transmit frequency will be calculated for each channel and in case no new messages are received within this interval, Janitor will alert you (the actual threshold used is 2 times the previous average frequency). This method is particulary useful for any kind of sensors submitting data regularly via MQTT (e.g. temperature).
 * **Ping:** Janitor will ping predefined hosts with a predefined frequency and will alert you in case of no reply (the actual threshold used is 2 consecutively missed pings). This method is useful for any kind of IOT devices e.g. sensors, cameras etc.
+* **HTTP:** Janitor will send a HTTP GET request to predefined addresses and check for reply, and, optionally, whether the reply contains a predefined string. Janitor will alert you in case of 2 consecutively unsuccessful requests. This method is useful for any kind of services with a web interface (e.g. APIs, hosted services etc.).
 
 Janitor currently supports the following alert methods:
 * **Telegram:** Janitor will send a message to a predefined Telegram channel.
 * **Gotify:** Janitor will send a push message to Gotify.
 
-Additionally, Janitor has a web interface where you can see the current status and historical data, remove sensors and reload the configuration file (see screenshot below).
+Additionally, Janitor has a web interface where you can see the current status and historical data, remove items and reload the configuration file (see screenshot below).
 
 ## Screenshot
 ![Screenshot](docs/screenshot.png)
@@ -43,14 +44,19 @@ This will create the standalone binary named `janitor` that you can place anywhe
 ## Configuration and usage
 
 For configuration, a YAML formatted file is required. Please use the [sample configuration file](config.yml) and change it according to your needs, particularly the following blocks:
-* mqtt: this block defines the server and topics for MQTT monitoring (can be omitted)
-* ping: this block defines the hosts for ping-based monitoring (can be omitted)
-* telegram: this block defines the token and chat id for Telegram (can be omitted)
-* gotify: this block defines the server and token for Gotify (can be omitted)
-* pinginterval: this variable defines the frequency for ping tests in seconds
-* web: this block defines the port for the built-in web server
-* history: this variable defines the number of records to keep per MQTT topic
-* debug: this variable enables debug mode with increased logging
+* `mqtt:` this block defines the server and topics for MQTT monitoring (default: none)
+* `mqtthistory:` this variable defines the number of records to keep per MQTT topic, used for calculating average transmission frequency (default: 10)
+* `ping:` this block defines the hosts for ping-based monitoring (default: none)
+* `pinginterval:` this variable defines the frequency for ping tests in seconds (default: 60)
+* `http:` this block defines the addresses for HTTP-based monitoring; if a value is specified, it is used for checking the content of the reply, otherwise all successful replies (status code 200) will be accepted (default: none)
+* `httpinterval:` this variable defines the frequency for http tests in seconds (default: 60)
+* `httptimeout:` this variable defines the timeout for HTTP requests in milliseconds (default: 5000)
+* `telegram:` this block defines the token and chat id for Telegram (default: none)
+* `gotify:` this block defines the server and token for Gotify (default: none)
+* `web:` this block defines the port for the built-in web server (default: 8080)
+* `debug:` this variable enables debug mode with increased logging (default: false)
+
+All variables are optional, e.g. in case you only want MQTT monitoring and Gotify notifications, include only those blocks. Where indicated above, default values will be used.
 
 Once you created a configuration file, Janitor can be launched as follows:
 

@@ -1,7 +1,7 @@
 debug: false
 
-web:
-  port: 8182
+#web:
+#  port: 8080
 
 #telegram:
 #  token: "INSERTYOUR:TOKEN"
@@ -20,12 +20,18 @@ mqtt:
    - "/sensors/#"
    - "/stats/#"
 
-history: 10
+mqtthistory: 10
 
 ping:
-  - name: host1
-    address: host1.lan
-  - name: host2
-    address: host2.lan
+  - name: openwrt.lan
+    address: openwrt.lan
 
 pinginterval: 60
+
+http:
+  - name: google
+    address: http://google.com
+#    value: google
+
+httpinterval: 60
+httptimeout: 5000

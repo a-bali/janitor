@@ -41,12 +41,19 @@ type Config struct {
 		Password string
 		Topic    []string
 	}
-	History      int
+	MQTTHistory  int
 	PingInterval int
 	Ping         []struct {
 		Name    string
 		Address string
 	}
+	HTTP []struct {
+		Name    string
+		Address string
+		Value   string
+	}
+	HTTPInterval int
+	HTTPTimeout  int
 }
 
 type MQTTEntry struct {
@@ -76,13 +83,26 @@ type PingHost struct {
 	TotalError int64
 }
 
+type HTTPHost struct {
+	Id             uint64
+	Address        string
+	LastOK         time.Time
+	LastError      time.Time
+	LastValue      string
+	LastErrorValue string
+	Status         int32
+	TotalOK        int64
+	TotalError     int64
+}
+
 type PageData struct {
-	MQTT       *map[string]MQTTTopic
-	Ping       *map[string]PingHost
+	MQTT       map[string]MQTTTopic
+	Ping       map[string]PingHost
+	HTTP       map[string]HTTPHost
 	Timestamp  time.Time
 	Uptime     time.Time
 	Config     string
-	LogHistory *[]LogEntry
+	LogHistory []LogEntry
 }
 
 type LogEntry struct {
@@ -92,8 +112,10 @@ type LogEntry struct {
 
 var mqttTopics = make(map[string]MQTTTopic)
 var pingHosts = make(map[string]PingHost)
+var httpHosts = make(map[string]HTTPHost)
 var mqttTopicsLock = &sync.RWMutex{}
 var pingHostsLock = &sync.RWMutex{}
+var httpHostsLock = &sync.RWMutex{}
 
 var config = Config{}
 var logHistory []LogEntry
@@ -117,6 +139,10 @@ func main() {
 		go startPing()
 	}
 
+	if len(config.HTTP) > 0 {
+		go startHTTP()
+	}
+
 	http.HandleFunc("/", serveIndex)
 	http.HandleFunc("/reload_config", reloadConfig)
 	http.HandleFunc("/delete", deleteWebItem)
@@ -137,11 +163,17 @@ func loadConfig() {
 		panic(err)
 	}
 
-	if config.History == 0 {
-		config.History = 10
+	if config.MQTTHistory == 0 {
+		config.MQTTHistory = 10
 	}
 	if config.PingInterval == 0 {
 		config.PingInterval = 60
+	}
+	if config.HTTPInterval == 0 {
+		config.HTTPInterval = 60
+	}
+	if config.HTTPTimeout == 0 {
+		config.HTTPTimeout = 5000
 	}
 	if config.Web.Port == 0 {
 		config.Web.Port = 8080
@@ -190,6 +222,68 @@ func startPing() {
 			pingHostsLock.Unlock()
 		}
 		time.Sleep(time.Second * time.Duration(config.PingInterval))
+	}
+}
+
+func startHTTP() {
+	for {
+		debug("Starting http loop")
+		for _, host := range config.HTTP {
+			httpHostsLock.RLock()
+			e := httpHosts[host.Name]
+			httpHostsLock.RUnlock()
+
+			e.Id = hash(host.Address)
+			e.Address = host.Address
+
+			errValue := ""
+
+			client := http.Client{
+				Timeout: time.Millisecond * time.Duration(config.HTTPTimeout),
+			}
+			resp, err := client.Get(host.Address)
+			if err != nil {
+				errValue = err.Error()
+			} else if resp.StatusCode != http.StatusOK {
+				errValue = fmt.Sprintf("status code %d", resp.StatusCode)
+			} else {
+				defer resp.Body.Close()
+				bodyBytes, bodyErr := ioutil.ReadAll(resp.Body)
+				if bodyErr != nil {
+					errValue = bodyErr.Error()
+				} else {
+					e.LastValue = string(bodyBytes)
+					if host.Value != "" && !strings.Contains(e.LastValue, host.Value) {
+						errValue = "Response does not match pattern"
+					}
+				}
+			}
+
+			if errValue == "" {
+				debug("HTTP OK for " + host.Address)
+				if e.Status == 2 {
+					notify("✓ HTTP OK for " + host.Name + ", in error since " + relaTime(e.LastError) + " ago")
+				}
+				e.TotalOK++
+				e.LastOK = time.Now()
+				e.Status = 0
+			} else {
+				debug("HTTP error for " + host.Address)
+				if e.Status == 0 {
+					e.Status++
+				} else if e.Status == 1 {
+					e.Status++
+					e.LastError = time.Now()
+					notify("⚠ HTTP ERROR for " + host.Name + ", last ok " + relaTime(e.LastOK) + " ago")
+				}
+				e.TotalError++
+				e.LastErrorValue = errValue
+			}
+			httpHostsLock.Lock()
+			httpHosts[host.Name] = e
+			httpHostsLock.Unlock()
+		}
+		time.Sleep(time.Second * time.Duration(config.HTTPInterval))
 	}
 }
 
@@ -244,7 +338,7 @@ func onMessageReceived(client mqtt.Client, message mqtt.Message) {
 
 	e.Id = hash(message.Topic())
 	e.History = append(e.History, MQTTEntry{string(message.Payload()), time.Now()})
-	if len(e.History) > config.History {
+	if len(e.History) > config.MQTTHistory {
 		e.History = e.History[1:]
 	}
 
@@ -316,10 +410,12 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 
 	mqttTopicsLock.RLock()
 	pingHostsLock.RLock()
-	tmpl.Execute(w, PageData{&mqttTopics, &pingHosts,
-		time.Now(), uptime, fmt.Sprintf("%+v", config), &logHistory})
+	httpHostsLock.RLock()
+	tmpl.Execute(w, PageData{mqttTopics, pingHosts, httpHosts,
+		time.Now(), uptime, fmt.Sprintf("%+v", config), logHistory})
 	mqttTopicsLock.RUnlock()
 	pingHostsLock.RUnlock()
+	httpHostsLock.RUnlock()
 }
 
 func reloadConfig(w http.ResponseWriter, r *http.Request) {
@@ -335,15 +431,24 @@ func deleteWebItem(w http.ResponseWriter, r *http.Request) {
 		switch r.Form["type"][0] {
 		case "mqtt":
 			if len(r.Form["name"]) > 0 {
+				mqttTopicsLock.Lock()
 				delete(mqttTopics, r.Form["name"][0])
+				mqttTopicsLock.Unlock()
 			}
 		case "ping":
 			if len(r.Form["name"]) > 0 {
+				pingHostsLock.Lock()
 				delete(pingHosts, r.Form["name"][0])
+				pingHostsLock.Unlock()
+			}
+		case "http":
+			if len(r.Form["name"]) > 0 {
+				httpHostsLock.Lock()
+				delete(httpHosts, r.Form["name"][0])
+				httpHostsLock.Unlock()
 			}
 		}
 	}
-	debug(fmt.Sprintf("%+v", r.Form))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

@@ -72,7 +72,7 @@
 		</script>
 	</head>
 	<body>
-		<h1>SENTINEL</h2>
+		<h1>Janitor</h2>
 		{{ if .MQTT }}
 		<h3>MQTT targets</h3>
 		<table>
@@ -187,8 +187,63 @@
 				<td class="status{{ $value.Status }}"></td>
 			</tr>
 			{{ end }}
-			</table>
+		</table>
 		{{ end }}
+
+		{{ if .HTTP}}
+		<h3>HTTP targets</h3>
+		<table>
+			<tr>
+				<th>Host name</th>
+				<th>Address</th>
+				<th>Last OK</th>
+				<th>Last error</th>
+				<th>Total OK requests</th>
+				<th>Total error requests</th>
+				<th>Last response value</th>
+				<th>Last error message</th>
+				<th>Status</th>
+			</tr>
+
+			{{ range $host, $value := .HTTP }}
+			<tr>
+				<td>
+					<form id="delete_http_{{ $value.Address }}" method="post" action="/delete">
+						<input type="hidden" name="type" value="http">
+						<input type="hidden" name="name" value="{{ $host }}">
+					</form>
+					{{ $host }}
+					<a href="javascript:submitForm('delete_http_{{ $value.Address }}')">x</a>
+				</td>
+				<td> {{ $value.Address }} </td>
+				<td>
+					{{ if not $value.LastOK.IsZero }}
+					{{ $value.LastOK.Format "2006-01-02 15:04:05" }}
+					<br />
+					<span class="relatime">({{ relaTime $value.LastOK }} ago)</span>
+					{{ end }}</td>
+				<td>
+					{{ if not $value.LastError.IsZero }}
+					{{ $value.LastError.Format "2006-01-02 15:04:05" }}
+					<br />
+					<span class="relatime">({{ relaTime $value.LastError }} ago)</span>
+					 {{ end }}</td>
+				<td> {{ $value.TotalOK }}</td>
+				<td> {{ $value.TotalError }}</td>
+				<td> 					
+					<a href="#" data-target="modal{{$value.Id}}" data-toggle="modal">+</a>
+					<div id="modal{{$value.Id}}" class="modal">
+						<div class="modal-window">
+							{{ $value.LastValue }}
+						</div>
+					</div></td>
+				<td> {{ $value.LastErrorValue }} </td>
+				<td class="status{{ $value.Status }}"></td>
+			</tr>
+			{{ end }}
+		</table>
+		{{ end }}
+
 		<p class="footer">
 			Generated at {{ .Timestamp.Format "2006-01-02 15:04:05" }}.
 			<br />
