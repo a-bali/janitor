@@ -16,7 +16,7 @@ Janitor currently supports the following alert methods:
 Additionally, Janitor has a web interface where you can see the current status and historical data, remove items and reload the configuration file (see screenshot below).
 
 ## Screenshot
-![Screenshot](docs/screenshot.png)
+![Screenshot](https://raw.githubusercontent.com/a-bali/janitor/master/docs/screenshot.png)
 
 ## Building and installing
 
@@ -41,21 +41,22 @@ Then use the following commands to clone the repository and build the binary:
 
 This will create the standalone binary named `janitor` that you can place anywhere you like.
 
-### Installing with Docker
+### Running with Docker
 
-You can use the supplied Dockerfile to build a container for Janitor:
+Docker Hub automatically builds an image from the latest version of Janitor that can be pulled as [`abali/janitor`](https://hub.docker.com/repository/docker/abali/janitor). To use this, map your configuration file to `/janitor/config.yml`:
+
+    $ docker run -v $(pwd)/config.yml:/janitor/config.yml -p 8080:8080 abali/janitor
+
+Alternatively, you can use the supplied Dockerfile to build a container yourself 
 
     $ git clone https://github.com/a-bali/janitor.git
     $ cd janitor
     $ docker build . -t janitor
-
-Afterwards you can use this container by mapping the config file to `/janitor/config.yml`:
-
     $ docker run -v $(pwd)/config.yml:/janitor/config.yml -p 8080:8080 janitor
 
 ## Configuration and usage
 
-For configuration, a YAML formatted file is required. Please use the [sample configuration file](config.yml) and change it according to your needs, particularly the following blocks:
+For configuration, a YAML formatted file is required. Please use the [sample configuration file](https://raw.githubusercontent.com/a-bali/janitor/master/config.yml) and change it according to your needs, particularly the following blocks:
 * `mqtt:` this block defines the server and topics for MQTT monitoring (default: none)
 * `mqtthistory:` this variable defines the number of records to keep per MQTT topic, used for calculating average transmission frequency (default: 10)
 * `ping:` this block defines the hosts for ping-based monitoring (default: none)
