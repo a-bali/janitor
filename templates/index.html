@@ -27,7 +27,7 @@
 		}
 		table {
 			width: 100%;
-			border-collapse: collapse			
+			border-collapse: collapse
 		}
 		tr, th, td {
 			border: 1px solid black
@@ -69,11 +69,12 @@
 					document.getElementById(f).submit();
 				}
 			}
+
 		</script>
 	</head>
 	<body>
 		<h1>Janitor</h2>
-		{{ if .MQTT }}
+		{{ if .MonitorData.MQTT }}
 		<h3>MQTT targets</h3>
 		<table>
 			<tr>
@@ -84,21 +85,23 @@
 				<th>History length</th>
 				<th>Total samples received</th>
 				<th>Avg transmit period</th>
+				<th>Timeout</th>
 				<th>Last error</th>
 				<th>Total errors</th>
 				<th>Status</th>
 			</tr>
-
-			{{ range $topic, $value := .MQTT}}
+			{{ range $topic, $value := .MonitorData.MQTT}}
+			{{ if not $value.Deleted }}
 			<tr>
-				<td><div>
-					<form id="delete_mqtt_{{ $value.Id }}" method="post" action="/delete">
+				<td>
+					<div>
+					<form id="delete_mqtt_{{ id $topic }}" method="post" action="/delete">
 						<input type="hidden" name="type" value="mqtt">
 						<input type="hidden" name="name" value="{{ $topic }}">
 					</form>
 					{{ $topic }}
-					<a href="javascript:submitForm('delete_mqtt_{{ $value.Id }}')">x</a>
-				</div>
+					<a href="javascript:submitForm('delete_mqtt_{{ id $topic }}')">x</a>
+					</div>
 				</td>
 				<td>
 					{{ $value.FirstSeen.Format "2006-01-02 15:04:05" }}
@@ -112,26 +115,28 @@
 				</td>
 				<td> {{ $value.LastPayload }}</td>
 				<td> {{ len $value.History }} 
-					<a href="#" data-target="modal{{$value.Id}}" data-toggle="modal">+</a>
-					<div id="modal{{$value.Id}}" class="modal">
-						<div class="modal-window">
-							<table class="log">
-								{{ range $idx, $item := $value.History }}
-								<tr>
-									<td class="logts">
-											{{ $item.Timestamp.Format "2006-01-02 15:04:05"}}
-									</td>
-									<td>
-										<strong>{{ $item.Payload }}</strong>
-									</td>
-								</tr>
-								{{ end }}
-							</table>
+					 <a href="#" data-target="modal{{id $topic}}" data-toggle="modal">+</a>
+						<div id="modal{{id $topic}}" class="modal">
+							<div class="modal-window">
+								<table class="log">
+									{{ range $idx, $item := $value.History }}
+									<tr>
+										<td class="logts">
+												{{ $item.Timestamp.Format "2006-01-02 15:04:05"}}
+										</td>
+										<td>
+											<strong>{{ $item.Value }}</strong>
+										</td>
+									</tr>
+									{{ end }}
+								</table>
+							</div>
 						</div>
 					</div>
 				</td>
 				<td> {{ $value.Samples }} </td>
-				<td> {{ printf "%.2f" $value.AvgTransmit }} </td>
+				<td> {{ floatornot $value.AvgTransmit }} </td>
+				<td> {{ floatornot $value.Timeout }} </td>
 				<td> 
 					{{ if not $value.LastError.IsZero }}
 					{{ $value.LastError.Format "2006-01-02 15:04:05" }}
@@ -143,15 +148,17 @@
 				<td class="status{{ $value.Status }}"></td>
 			</tr>
 			{{ end }}
+			{{ end }}
 		</table>
 		{{ end }}
 		
-		{{ if .Ping}}
+		{{ if .MonitorData.Ping}}
 		<h3>Ping targets</h3>
 		<table>
 			<tr>
 				<th>Host name</th>
 				<th>Address</th>
+				<th>Interval</th>
 				<th>Last OK</th>
 				<th>Last error</th>
 				<th>Total OK packets</th>
@@ -159,17 +166,19 @@
 				<th>Status</th>
 			</tr>
 
-			{{ range $host, $value := .Ping }}
+			{{ range $host, $value := .MonitorData.Ping }}
+
 			<tr>
 				<td>
-					<form id="delete_ping_{{ $value.Address }}" method="post" action="/delete">
-						<input type="hidden" name="type" value="ping">
-						<input type="hidden" name="name" value="{{ $host }}">
+					<form id="delete_ping_{{ id $value.Address }}" method="post" action="/delete">
+					<input type="hidden" name="type" value="ping">
+					<input type="hidden" name="name" value="{{ $value.Address }}">
 					</form>
 					{{ $host }}
-					<a href="javascript:submitForm('delete_ping_{{ $value.Address }}')">x</a>
+					<a href="javascript:submitForm('delete_ping_{{ id $value.Address }}')">x</a>
 				</td>
 				<td> {{ $value.Address }} </td>
+				<td> {{ $value.Interval }} </td>
 				<td>
 					{{ if not $value.LastOK.IsZero }}
 					{{ $value.LastOK.Format "2006-01-02 15:04:05" }}
@@ -187,15 +196,18 @@
 				<td class="status{{ $value.Status }}"></td>
 			</tr>
 			{{ end }}
+
 		</table>
 		{{ end }}
 
-		{{ if .HTTP}}
+		{{ if .MonitorData.HTTP}}
 		<h3>HTTP targets</h3>
 		<table>
 			<tr>
 				<th>Host name</th>
 				<th>Address</th>
+				<th>Interval</th>
+				<th>Timeout</th>
 				<th>Last OK</th>
 				<th>Last error</th>
 				<th>Total OK requests</th>
@@ -205,17 +217,20 @@
 				<th>Status</th>
 			</tr>
 
-			{{ range $host, $value := .HTTP }}
+			{{ range $host, $value := .MonitorData.HTTP }}
+
 			<tr>
 				<td>
-					<form id="delete_http_{{ $value.Address }}" method="post" action="/delete">
+					<form id="delete_http_{{ id $value.Address }}" method="post" action="/delete">
 						<input type="hidden" name="type" value="http">
-						<input type="hidden" name="name" value="{{ $host }}">
+						<input type="hidden" name="name" value="{{ $value.Address }}">
 					</form>
 					{{ $host }}
-					<a href="javascript:submitForm('delete_http_{{ $value.Address }}')">x</a>
+					<a href="javascript:submitForm('delete_http_{{ id $value.Address }}')">x</a>
 				</td>
 				<td> {{ $value.Address }} </td>
+				<td> {{ $value.Interval }} </td>
+				<td> {{ $value.Timeout }} </td>
 				<td>
 					{{ if not $value.LastOK.IsZero }}
 					{{ $value.LastOK.Format "2006-01-02 15:04:05" }}
@@ -231,15 +246,16 @@
 				<td> {{ $value.TotalOK }}</td>
 				<td> {{ $value.TotalError }}</td>
 				<td> 					
-					<a href="#" data-target="modal{{$value.Id}}" data-toggle="modal">+</a>
-					<div id="modal{{$value.Id}}" class="modal">
+					<a href="#" data-target="modal{{ id $host }}" data-toggle="modal">+</a>
+					<div id="modal{{ id $host }}" class="modal">
 						<div class="modal-window">
-							{{ $value.LastValue }}
+							{{ escape $value.LastValue }}
 						</div>
 					</div></td>
 				<td> {{ $value.LastErrorValue }} </td>
 				<td class="status{{ $value.Status }}"></td>
 			</tr>
+
 			{{ end }}
 		</table>
 		{{ end }}
@@ -254,10 +270,10 @@
 			<a href="#" data-target="modal_config" data-toggle="modal">Config</a>
 			<a href="/reload_config">Reload config</a>
 			<a href="javascript:window.location.reload()">Refresh</a>
-			
+
 			<div id="modal_config" class="modal">
 				<div class="modal-window">
-					{{ .Config }}
+					<pre>{{ json .Config }}</pre>
 				</div>
 			</div>
 
@@ -267,14 +283,13 @@
 						{{ range $e := .LogHistory }}
 						<tr>
 							<td class="logts">{{ $e.Timestamp.Format "2006-01-02 15:04:05" }}</td>
-							<td>{{ $e.Entry }}</td>
+							<td>{{ $e.Value }}</td>
 						</tr>
 						{{ end }}
 					</table>
 				</div>
 			</div>
 
-			
 		</p>
 	</body>
 </html>

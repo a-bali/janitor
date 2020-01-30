@@ -1,37 +1,110 @@
-debug: false
 
-#web:
-#  port: 8080
+### GENERAL CONFIGURATION
+### All these directives are optional. If missing, defaults will be applied (see below).
 
-#telegram:
-#  token: "INSERTYOUR:TOKEN"
-#  chat: INSERTYOURCHATID
+# Enable debug logging (default: false)
+# If enabled, detailed information about received data will be logged.
+# If disabled, only errors will be logged.
+debug: true
 
-#gotify:
-#  server: "http://yourserver:port"
-#  token: INSERTYOURTOKEN
+# Maximum size of log history to maintain (default: 1000)
+logsize: 1000
 
-mqtt:
-  server: openwrt.lan
-  port: 1883
-#  user: mqttusername
-#  password: mqttpassword
-  topic: 
-   - "/sensors/#"
-   - "/stats/#"
+# Configuration of built in web server:
+# - Host name (default: '' meaning all interfaces will be bound)
+# - Port number (default: 8080)
+web:
+  host: ''
+  port: 8080
 
-mqtthistory: 10
+### MONITORING TARGETS
+### All these blocks are optional. If missing, will not be monitored.
 
-ping:
-  - name: openwrt.lan
-    address: openwrt.lan
+monitor:
 
-pinginterval: 60
+  # MQTT monitoring
+  mqtt:
+    # Server connection details
+    # Host name
+    server: openwrt.lan
+    # Port number (default: 1883)
+    port: 1883
+    # User and password if required
+    user: 
+    password: 
+    # Maximum number of messages to retain for display and average frequency calculation (default: 10)
+    history: 10
+    # Standard timeout to apply as a multiple of the average transmit frequency (default: 1.5, interpreted as 1.5 * avg transmit frequency)
+    # (can be overridden per topics below)
+    standardtimeout: 1.5
+    # Topics to monitor. Can include wildcard ('/#') and wildcard subscriptions can overlap with others.
+    # In case of overlap, the first matching topic will be used to determine timeout.
+    targets: 
+       # Topic name
+     - topic: "/sensors/aqara_inside/#"
+       # Custom timeout threshold (fixed value in seconds) to be used for the topic (default: standardtimeout as defined above)
+       timeout: 3600
+     - topic: "/sensors/aqara_outside/#"
+       timeout: 3600
+     - topic: "/sensors/#"
+     - topic: "/stats/#"
 
-http:
-  - name: google
-    address: http://google.com
-#    value: google
 
-httpinterval: 60
-httptimeout: 5000
+  # Ping monitoring
+  ping:
+    # Default interval between checks in seconds (default: 60)
+    # (can be overridden per target below)
+    interval: 60
+    # Targets to ping
+    targets:
+      # Name of the target (used for display and alerting)
+    - name: openwrt
+      # Network address to ping
+      address: openwrt.lan
+      # Interval between checks in seconds (default: default interval specified above)
+      interval: 10
+    - name: google
+      address: google.com
+
+
+
+  # HTTP monitoring
+  http:
+    # Default interval between checks in seconds (default: 60)
+    # (can be overridden per target below)
+    interval: 60
+    # Default timeout for the HTTP requests in milliseconds (default: 5000)
+    # (can be overridden per target below)
+    timeout: 5000
+    # Targets to monitor with HTTP GET
+    targets:
+      # Name of the target (used for display and alerting)
+    - name: NAS
+      # HTTP address for GET request
+      address: http://index.nas
+      # String value to check for in reply (optional - not used if not specified)
+      value: nas
+      # Interval between checks in seconds (default: default interval specified above)
+      interval: 10
+      # Timeout for the HTTP requests in milliseconds (default: default interval specified above)
+      timeout: 500
+    - name: google
+      address: http://google.com
+
+### ALERTING METHODS
+### All these blocks are optional. If missing, will not be used for alerting.
+
+alert:
+
+  # Telegram alerting. Please specify token and chat id for the messages.
+  # For more information, please see:
+  # https://core.telegram.org/bots#6-botfather
+  # https://stackoverflow.com/questions/45414021/get-telegram-channel-group-id
+  #telegram:
+  #  token: "INSERTYOURTOKENHERE"
+  #  chat: 12
+
+  # Gotify alerting. Please specify server and token.
+  #gotify:
+  #  server: "http://nas:8765"
+  #  token: AMuHwu9EhjF0Z4M
