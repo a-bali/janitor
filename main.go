@@ -1,5 +1,7 @@
 package main
 
+// TODO ping & http ha 0 az input, azonnal álljon vissza defaultra
+
 import (
 	"encoding/json"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 	"sync"
 	"text/template"
 	"time"
+	"strconv"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
@@ -91,6 +94,7 @@ type MQTTMonitorData struct {
 	History     []TimedEntry
 	AvgTransmit float64
 	Timeout     float64
+	CustomTimeout float64
 	Status      int32
 	Samples     int64
 	Alerts      int64
@@ -98,7 +102,7 @@ type MQTTMonitorData struct {
 }
 
 type PingMonitorData struct {
-	Address    string
+	Name       string
 	LastOK     time.Time
 	LastError  time.Time
 	Status     int32
@@ -109,7 +113,7 @@ type PingMonitorData struct {
 }
 
 type HTTPMonitorData struct {
-	Address        string
+	Name           string
 	LastOK         time.Time
 	LastError      time.Time
 	LastValue      string
@@ -182,6 +186,7 @@ func main() {
 	http.HandleFunc("/", serveIndex)
 	http.HandleFunc("/reload_config", reloadConfig)
 	http.HandleFunc("/delete", deleteWebItem)
+	http.HandleFunc("/config", configWebItem)
 	panic(http.ListenAndServe(fmt.Sprintf("%s:%d", getConfig().Web.Host, getConfig().Web.Port), nil))
 }
 
@@ -378,22 +383,29 @@ func evaluateMQTT() {
 		}
 
 		elapsed := time.Now().Sub(v.LastSeen).Seconds()
-		timeout := v.AvgTransmit * getConfig().Monitor.MQTT.StandardTimeout
 
-		// if custom timeout is configured, use that instead of the standard
-		for _, t := range getConfig().Monitor.MQTT.Targets {
-			if matchMQTTTopic(t.Topic, topic) && t.Timeout > 0 {
-				timeout = float64(t.Timeout)
-				break
+		var timeout float64
+		// use overridden timeout if specified
+		if v.CustomTimeout > 0 {
+			timeout = v.CustomTimeout
+		} else {
+			// use configured timeout otherwise (general, specific)
+			timeout = v.AvgTransmit * getConfig().Monitor.MQTT.StandardTimeout
+			for _, t := range getConfig().Monitor.MQTT.Targets {
+				if matchMQTTTopic(t.Topic, topic) && t.Timeout > 0 {
+					timeout = float64(t.Timeout)
+					break
+				}
 			}
 		}
+
+		// Store calculated timeout for showing on web
+		v.Timeout = timeout
 
 		// no custom timeout is configured, AvgTransmit is not yet established (NaN) -> skip
 		if math.IsNaN(timeout) {
 			continue
 		}
-		// Store calculated timeout for showing on web
-		v.Timeout = timeout
 
 		if elapsed > timeout && v.Status == STATUS_OK {
 			alert(fmt.Sprintf("⚠ MQTT ERROR: %s last seen %s ago (timeout %.2fs)", topic, relaTime(v.LastSeen), timeout))
@@ -434,32 +446,33 @@ func checkPing() {
 
 		monitorData.Lock()
 
-		e, ok := monitorData.Ping[target.Name]
+		e, ok := monitorData.Ping[target.Address]
 		if !ok {
-			monitorData.Ping[target.Name] = &PingMonitorData{}
-			e = monitorData.Ping[target.Name]
-			e.Address = target.Address
+			monitorData.Ping[target.Address] = &PingMonitorData{}
+			e = monitorData.Ping[target.Address]
+			e.Name = target.Name
 		}
 
 		ts := e.Timestamp
+		
 		i := e.Interval
-		monitorData.Unlock()
-
 		if i == 0 {
 			i = target.Interval
 		}
 		if i == 0 {
 			i = getConfig().Monitor.Ping.Interval
 		}
+		e.Interval = i
+
+		monitorData.Unlock()
 
 		// proceed only if last check (regardless of outcome) was before now minus the configured interval
 		if ts.Add(time.Duration(i) * time.Second).Before(time.Now()) {
 
 			r := ping(target.Address)
-			debug(fmt.Sprintf("Pinging %s: %t", e.Address, r))
+			debug(fmt.Sprintf("Pinging %s: %t", target.Address, r))
 
 			monitorData.Lock()
-			e.Interval = i
 			e.Timestamp = time.Now()
 			if r {
 				e.TotalOK++
@@ -492,17 +505,16 @@ func checkHTTP() {
 
 		monitorData.Lock()
 
-		e, ok := monitorData.HTTP[target.Name]
+		e, ok := monitorData.HTTP[target.Address]
 		if !ok {
-			monitorData.HTTP[target.Name] = &HTTPMonitorData{}
-			e = monitorData.HTTP[target.Name]
-			e.Address = target.Address
+			monitorData.HTTP[target.Address] = &HTTPMonitorData{}
+			e = monitorData.HTTP[target.Address]
+			e.Name = target.Name
 		}
 
 		ts := e.Timestamp
 		i := e.Interval
 		timeout := e.Timeout
-		monitorData.Unlock()
 
 		if i == 0 {
 			i = target.Interval
@@ -517,15 +529,18 @@ func checkHTTP() {
 		if timeout == 0 {
 			timeout = getConfig().Monitor.HTTP.Timeout
 		}
+
+		e.Interval = i
+		e.Timeout = timeout
+		monitorData.Unlock()
+
 		// proceed only if last check (regardless of outcome) was before now minus the configured interval
 		if ts.Add(time.Duration(i) * time.Second).Before(time.Now()) {
 
 			r, err, val := performHTTPCheck(target.Address, target.Value, timeout)
-			debug(fmt.Sprintf("HTTP request %s: %t %s", e.Address, r, err))
+			debug(fmt.Sprintf("HTTP request %s: %t %s", target.Address, r, err))
 
 			monitorData.Lock()
-			e.Interval = i
-			e.Timeout = timeout
 			e.Timestamp = time.Now()
 			if r {
 				e.TotalOK++
@@ -708,12 +723,7 @@ func deleteWebItem(w http.ResponseWriter, r *http.Request) {
 					configLock.Unlock()
 				}
 			}
-			for k, v := range monitorData.Ping {
-				if v.Address == f {
-					delete(monitorData.Ping, k)
-				}
-			}
-
+			delete(monitorData.Ping, f)
 		case "http":
 			for k, v := range getConfig().Monitor.HTTP.Targets {
 				if v.Address == f {
@@ -722,11 +732,60 @@ func deleteWebItem(w http.ResponseWriter, r *http.Request) {
 					configLock.Unlock()
 				}
 			}
-			for k, v := range monitorData.HTTP {
-				if v.Address == f {
-					delete(monitorData.HTTP, k)
+			delete(monitorData.HTTP, f)
+		}
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// Set parameters on monitored entries from web.
+func configWebItem(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	debug(fmt.Sprintf("Web request %s from %s: %+v", r.RequestURI, r.RemoteAddr, r.Form))
+
+	if len(r.Form["type"]) > 0 && len(r.Form["name"]) > 0 {
+		f := r.Form["name"][0]
+		switch r.Form["type"][0] {
+		case "mqtt":
+			if len(r.Form["timeout"]) > 0 {
+				if v, err := strconv.ParseFloat(r.Form["timeout"][0], 64); err != nil {
+					log("Unable to parse requested timeout: " + r.Form["timeout"][0])
+				} else {
+					monitorData.Lock()
+					monitorData.MQTT[f].CustomTimeout = v
+					monitorData.Unlock()
+					evaluateMQTT()
+				}
+			}			
+		case "ping":
+			if len(r.Form["interval"]) > 0 {
+				if v, err := strconv.ParseUint(r.Form["interval"][0], 10, 64); err != nil {
+					log("Unable to parse requested interval: " + r.Form["interval"][0])
+				} else {
+					monitorData.Lock()
+					monitorData.Ping[f].Interval = int(v)
+					monitorData.Unlock()
+				}
+			}			
+		case "http":
+			if len(r.Form["interval"]) > 0 {
+				if v, err := strconv.ParseUint(r.Form["interval"][0], 10, 64); err != nil {
+					log("Unable to parse requested interval: " + r.Form["interval"][0])
+				} else {
+					monitorData.Lock()
+					monitorData.HTTP[f].Interval = int(v)
+					monitorData.Unlock()
 				}
 			}
+			if len(r.Form["timeout"]) > 0 {
+				if v, err := strconv.ParseUint(r.Form["timeout"][0], 10, 64); err != nil {
+					log("Unable to parse requested timeout: " + r.Form["timeout"][0])
+				} else {
+					monitorData.Lock()
+					monitorData.HTTP[f].Timeout = int(v)
+					monitorData.Unlock()
+				}
+			}	
 		}
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)

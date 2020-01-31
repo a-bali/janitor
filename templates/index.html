@@ -64,10 +64,16 @@
     			}
 			}, false);
 
-			function submitForm(f) {
+			function submitDelete(f) {
 				if (confirm("Really delete entry?")) {
 					document.getElementById(f).submit();
 				}
+			}
+
+			function submitConfig(f, id, def) {
+				var t = prompt("Enter " + id + " (0 for default):", def);
+				document.getElementById(f)[id].value = t;
+				document.getElementById(f).submit();
 			}
 
 		</script>
@@ -100,7 +106,7 @@
 						<input type="hidden" name="name" value="{{ $topic }}">
 					</form>
 					{{ $topic }}
-					<a href="javascript:submitForm('delete_mqtt_{{ id $topic }}')">x</a>
+					<a href="javascript:submitDelete('delete_mqtt_{{ id $topic }}')">x</a>
 					</div>
 				</td>
 				<td>
@@ -136,7 +142,16 @@
 				</td>
 				<td> {{ $value.Samples }} </td>
 				<td> {{ floatornot $value.AvgTransmit }} </td>
-				<td> {{ floatornot $value.Timeout }} </td>
+				<td>
+					<form id="config_mqtt_{{ id $topic }}" method="post" action="/config">
+						<input type="hidden" name="type" value="mqtt">
+						<input type="hidden" name="name" value="{{ $topic }}">
+						<input type="hidden" name="timeout" value=0>
+					</form>
+					<a href="javascript:submitConfig('config_mqtt_{{ id $topic }}', 'timeout', '{{ floatornot $value.Timeout }}')">
+						{{ floatornot $value.Timeout }}
+					</a>
+				</td>
 				<td> 
 					{{ if not $value.LastError.IsZero }}
 					{{ $value.LastError.Format "2006-01-02 15:04:05" }}
@@ -170,15 +185,24 @@
 
 			<tr>
 				<td>
-					<form id="delete_ping_{{ id $value.Address }}" method="post" action="/delete">
+					<form id="delete_ping_{{ id $host }}" method="post" action="/delete">
 					<input type="hidden" name="type" value="ping">
-					<input type="hidden" name="name" value="{{ $value.Address }}">
+					<input type="hidden" name="name" value="{{ $host }}">
 					</form>
-					{{ $host }}
-					<a href="javascript:submitForm('delete_ping_{{ id $value.Address }}')">x</a>
+					{{ $value.Name }}
+					<a href="javascript:submitDelete('delete_ping_{{ id $host }}')">x</a>
 				</td>
-				<td> {{ $value.Address }} </td>
-				<td> {{ $value.Interval }} </td>
+				<td> {{ $host }} </td>
+				<td> 
+					<form id="config_ping_{{ id $host }}" method="post" action="/config">
+						<input type="hidden" name="type" value="ping">
+						<input type="hidden" name="name" value="{{ $host }}">
+						<input type="hidden" name="interval" value=0>
+					</form>
+					<a href="javascript:submitConfig('config_ping_{{ id $host }}', 'interval', '{{ $value.Interval }}')">
+						{{ $value.Interval }}
+					</a>
+				</td>
 				<td>
 					{{ if not $value.LastOK.IsZero }}
 					{{ $value.LastOK.Format "2006-01-02 15:04:05" }}
@@ -221,16 +245,34 @@
 
 			<tr>
 				<td>
-					<form id="delete_http_{{ id $value.Address }}" method="post" action="/delete">
+					<form id="delete_http_{{ id $host }}" method="post" action="/delete">
 						<input type="hidden" name="type" value="http">
-						<input type="hidden" name="name" value="{{ $value.Address }}">
+						<input type="hidden" name="name" value="{{ $host }}">
 					</form>
-					{{ $host }}
-					<a href="javascript:submitForm('delete_http_{{ id $value.Address }}')">x</a>
+					{{ $value.Name }}
+					<a href="javascript:submitDelete('delete_http_{{ id $host }}')">x</a>
 				</td>
-				<td> {{ $value.Address }} </td>
-				<td> {{ $value.Interval }} </td>
-				<td> {{ $value.Timeout }} </td>
+				<td> {{ $host }} </td>
+				<td>
+					<form id="config_http_1_{{ id $host }}" method="post" action="/config">
+						<input type="hidden" name="type" value="http">
+						<input type="hidden" name="name" value="{{ $host }}">
+						<input type="hidden" name="interval" value=0>
+					</form>
+					<a href="javascript:submitConfig('config_http_1_{{ id $host }}', 'interval', '{{ $value.Interval }}')">
+						{{ $value.Interval }}
+					</a>
+				</td>
+				<td>
+					<form id="config_http_2_{{ id $host }}" method="post" action="/config">
+						<input type="hidden" name="type" value="http">
+						<input type="hidden" name="name" value="{{ $host }}">
+						<input type="hidden" name="timeout" value=0>
+					</form>
+					<a href="javascript:submitConfig('config_http_2_{{ id $host }}', 'timeout', '{{ $value.Timeout }}')">
+						{{ $value.Timeout }}
+					</a>
+				</td>
 				<td>
 					{{ if not $value.LastOK.IsZero }}
 					{{ $value.LastOK.Format "2006-01-02 15:04:05" }}
