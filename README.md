@@ -12,6 +12,7 @@ Janitor currently supports the following monitoring methods:
 Janitor currently supports the following alert methods:
 * **Telegram:** Janitor will send a message to a predefined Telegram channel.
 * **Gotify:** Janitor will send a push message to Gotify.
+* **Exec:** Janitor will execute a preconfigured command. This enables creating any type of custom alerting method.
 
 Additionally, Janitor has a web interface where you can see the current status and historical data, remove items, change timeout and interval values and reload the configuration file (see screenshot below).
 

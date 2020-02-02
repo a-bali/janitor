@@ -1,7 +1,5 @@
 package main
 
-// TODO ping & http ha 0 az input, azonnal álljon vissza defaultra
-
 import (
 	"encoding/json"
 	"fmt"
@@ -42,6 +40,7 @@ type Config struct {
 			Token  string
 			Server string
 		}
+		Exec string
 	}
 	Monitor struct {
 		MQTT struct {
@@ -603,11 +602,9 @@ func performHTTPCheck(url string, pattern string, timeout int) (bool, string, st
 // Returns false if ping exits with error code or with "Destination host unreachable".
 // Returns true in case of successful ping.
 func ping(host string) bool {
-	cmd := exec.Command("x")
+	cmd := exec.Command("ping", "-c", "1", host)
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("ping", "-n", "1", host)
-	} else {
-		cmd = exec.Command("ping", "-c", "1", host)
 	}
 	out, err := cmd.Output()
 	if err != nil || strings.Contains(string(out), "Destination host unreachable") {
@@ -803,6 +800,16 @@ func alert(s string) {
 		if _, err := http.PostForm(getConfig().Alert.Gotify.Server+"/message?token="+getConfig().Alert.Gotify.Token,
 			url.Values{"message": {s}, "title": {"Janitor alert"}}); err != nil {
 			log("Error in Gotify request: " + err.Error())
+		}
+	}
+	if getConfig().Alert.Exec != "" {
+		cmd := exec.Command("sh", "-c", getConfig().Alert.Exec)
+		if runtime.GOOS == "windows" {
+			cmd = exec.Command(getConfig().Alert.Exec)
+		}
+		cmd.Stdin = strings.NewReader(s)
+		if err := cmd.Run(); err != nil {
+			log("Error in executing " + getConfig().Alert.Exec + ": " + err.Error())
 		}
 	}
 }

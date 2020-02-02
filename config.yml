@@ -108,3 +108,8 @@ alert:
   #gotify:
   #  server: "http://nas:8765"
   #  token: AMuHwu9EhjF0Z4M
+
+  # Executing arbitrary commands. On Linux, this will be given to a shell process.
+  # The command will receive the alert message on standard input.
+  #exec: /home/joe/bin/alert.sh
+
