@@ -23,14 +23,11 @@ Additionally, Janitor has a web interface where you can see the current status a
 
 Janitor is written in Go and will compile to a single standalone binary. Janitor should compile and work both on Linux and on Windows.
 
-For compiling, first install the necessary prerequisites:
+For compiling, first install the necessary prerequisites and [packr](https://github.com/gobuffalo/packr) for embedding the HTML template in the binary:
 
     $ go get github.com/eclipse/paho.mqtt.golang
     $ go get github.com/go-telegram-bot-api/telegram-bot-api
     $ go get gopkg.in/yaml.v2
-
-In order to embed the HTML template in the binary, install also [packr](https://github.com/gobuffalo/packr):
-
     $ go get github.com/gobuffalo/packr/packr
     $ go get github.com/gobuffalo/packr
 

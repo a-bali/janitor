@@ -1,7 +1,7 @@
 <html>
 	<head>
 		<style>
-		body { font-family: Arial} 
+		body { font-family: Arial } 
 		.modal {
     		position: fixed;
     		top: 0;
@@ -27,22 +27,27 @@
 		}
 		table {
 			width: 100%;
-			border-collapse: collapse
+			border-collapse: collapse;
 		}
 		tr, th, td {
-			border: 1px solid black
+			border: 1px solid grey;
+			padding: 2px;
+			text-align: center
 		}
-		th {
-			background-color: gray
-		}
+		th { background-color: #aaaaaa; padding: 5px }
+		td.name { text-align: left }
+		td.status0, td.status1, td.status2 { width: 5% }
 		td.status0 { background-color: green }
 		td.status1 { background-color: yellow }
 		td.status2 { background-color: red }
-		.relatime  { color: grey; font-size: 80% }
-		.footer    { font-size: 80% }
-		.log 	   { font-size: 70% }
-		.logts     { white-space: nowrap }
+		.relatime { color: grey; font-size: 80% }
+		.datetime { font-weight: bold; font-size: 90% }
+		.footer { font-size: 80% }
+		.log { font-size: 70% }
+		.logts { white-space: nowrap }
+		.delete { float: right }
 		a, a:visited, a:hover, a:active { color: blue; }
+		a:hover { background-color: lightblue}
 		</style>
 		<script>
 			document.addEventListener('click', function (e) {
@@ -82,7 +87,7 @@
 		<h1>Janitor</h2>
 		{{ if .MonitorData.MQTT }}
 		<h3>MQTT targets</h3>
-		<table>
+		<table class="pure-table pure-table-bordered">
 			<tr>
 				<th>MQTT topic</th>
 				<th>First seen</th>
@@ -99,23 +104,23 @@
 			{{ range $topic, $value := .MonitorData.MQTT}}
 			{{ if not $value.Deleted }}
 			<tr>
-				<td>
+				<td class="name">
 					<div>
 					<form id="delete_mqtt_{{ id $topic }}" method="post" action="/delete">
 						<input type="hidden" name="type" value="mqtt">
 						<input type="hidden" name="name" value="{{ $topic }}">
 					</form>
 					{{ $topic }}
-					<a href="javascript:submitDelete('delete_mqtt_{{ id $topic }}')">x</a>
+					<span class="delete">(<a href="javascript:submitDelete('delete_mqtt_{{ id $topic }}')">x</a>)</span>
 					</div>
 				</td>
 				<td>
-					{{ $value.FirstSeen.Format "2006-01-02 15:04:05" }}
+					<span class="datetime">{{ $value.FirstSeen.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.FirstSeen }} ago)</span>
 				</td>
 				<td>
-					{{ $value.LastSeen.Format "2006-01-02 15:04:05" }}
+					<span class="datetime">{{ $value.LastSeen.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastSeen }} ago)</span>
 				</td>
@@ -154,7 +159,7 @@
 				</td>
 				<td> 
 					{{ if not $value.LastError.IsZero }}
-					{{ $value.LastError.Format "2006-01-02 15:04:05" }}
+					<span class="datetime">{{ $value.LastError.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastError }} ago)</span>
 					{{ end }}
@@ -169,7 +174,7 @@
 		
 		{{ if .MonitorData.Ping}}
 		<h3>Ping targets</h3>
-		<table>
+		<table class="pure-table pure-table-bordered">
 			<tr>
 				<th>Host name</th>
 				<th>Address</th>
@@ -184,15 +189,15 @@
 			{{ range $host, $value := .MonitorData.Ping }}
 
 			<tr>
-				<td>
+				<td class="name">
 					<form id="delete_ping_{{ id $host }}" method="post" action="/delete">
 					<input type="hidden" name="type" value="ping">
 					<input type="hidden" name="name" value="{{ $host }}">
 					</form>
 					{{ $value.Name }}
-					<a href="javascript:submitDelete('delete_ping_{{ id $host }}')">x</a>
+					<span class="delete">(<a href="javascript:submitDelete('delete_ping_{{ id $host }}')">x</a>)</span>
 				</td>
-				<td> {{ $host }} </td>
+				<td class="name"> {{ $host }} </td>
 				<td> 
 					<form id="config_ping_{{ id $host }}" method="post" action="/config">
 						<input type="hidden" name="type" value="ping">
@@ -205,13 +210,13 @@
 				</td>
 				<td>
 					{{ if not $value.LastOK.IsZero }}
-					{{ $value.LastOK.Format "2006-01-02 15:04:05" }}
+					<span class="datetime">{{ $value.LastOK.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastOK }} ago)</span>
 					{{ end }}</td>
 				<td>
 					{{ if not $value.LastError.IsZero }}
-					{{ $value.LastError.Format "2006-01-02 15:04:05" }}
+					<span class="datetime">{{ $value.LastError.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastError }} ago)</span>
 					 {{ end }}</td>
@@ -226,7 +231,7 @@
 
 		{{ if .MonitorData.HTTP}}
 		<h3>HTTP targets</h3>
-		<table>
+		<table class="pure-table pure-table-bordered">
 			<tr>
 				<th>Host name</th>
 				<th>Address</th>
@@ -244,15 +249,15 @@
 			{{ range $host, $value := .MonitorData.HTTP }}
 
 			<tr>
-				<td>
+				<td class="name">
 					<form id="delete_http_{{ id $host }}" method="post" action="/delete">
 						<input type="hidden" name="type" value="http">
 						<input type="hidden" name="name" value="{{ $host }}">
 					</form>
 					{{ $value.Name }}
-					<a href="javascript:submitDelete('delete_http_{{ id $host }}')">x</a>
+					<span class="delete">(<a href="javascript:submitDelete('delete_http_{{ id $host }}')">x</a>)</span>
 				</td>
-				<td> {{ $host }} </td>
+				<td class="name"> {{ $host }} </td>
 				<td>
 					<form id="config_http_1_{{ id $host }}" method="post" action="/config">
 						<input type="hidden" name="type" value="http">
@@ -275,13 +280,13 @@
 				</td>
 				<td>
 					{{ if not $value.LastOK.IsZero }}
-					{{ $value.LastOK.Format "2006-01-02 15:04:05" }}
+					<span class="datetime">{{ $value.LastOK.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastOK }} ago)</span>
 					{{ end }}</td>
 				<td>
 					{{ if not $value.LastError.IsZero }}
-					{{ $value.LastError.Format "2006-01-02 15:04:05" }}
+					<span class="datetime">{{ $value.LastError.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastError }} ago)</span>
 					 {{ end }}</td>
