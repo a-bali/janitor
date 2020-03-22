@@ -113,3 +113,21 @@ alert:
   # The command will receive the alert message on standard input.
   #exec: /home/joe/bin/alert.sh
 
+  # Alerting by posting to predefined MQTT topic with a JSON payload. Example payload with description of the structure:
+  # {"type":"HTTP",                                      // type of the sensor - potential values: HTTP, Ping, MQTT
+  #  "name":"NAS",                                       // name of the senror
+  #  "status":"ERROR",                                   // status of the sensor - potential values: OK, ERROR
+  #  "since":"2020-03-22T18:58:00.157284409+01:00",      // last error/ok timestamp for sensor
+  #  "error":"",                                         // further error message if any
+  #  "message":"⚠ HTTP ERROR for NAS, last seen 2s ago"} // text alert message
+  mqtt:
+    # Server connection details
+    # Host name
+    server: openwrt.lan
+    # Port number (default: 1883)
+    port: 1883
+    # User and password if required
+    user: 
+    password: 
+    topic: /janitor/alerts
+

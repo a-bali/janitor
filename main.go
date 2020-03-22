@@ -11,11 +11,11 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
 	"time"
-	"strconv"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
@@ -41,6 +41,13 @@ type Config struct {
 			Server string
 		}
 		Exec string
+		MQTT struct {
+			Server   string
+			Port     int
+			User     string
+			Password string
+			Topic    string
+		}
 	}
 	Monitor struct {
 		MQTT struct {
@@ -86,18 +93,18 @@ type TimedEntry struct {
 
 // MQTTTopic stores status information on a MQTT topic.
 type MQTTMonitorData struct {
-	FirstSeen   time.Time
-	LastSeen    time.Time
-	LastError   time.Time
-	LastPayload string
-	History     []TimedEntry
-	AvgTransmit float64
-	Timeout     float64
+	FirstSeen     time.Time
+	LastSeen      time.Time
+	LastError     time.Time
+	LastPayload   string
+	History       []TimedEntry
+	AvgTransmit   float64
+	Timeout       float64
 	CustomTimeout float64
-	Status      int32
-	Samples     int64
-	Alerts      int64
-	Deleted     bool
+	Status        int32
+	Samples       int64
+	Alerts        int64
+	Deleted       bool
 }
 
 type PingMonitorData struct {
@@ -142,6 +149,16 @@ type PageData struct {
 	LogHistory  *[]TimedEntry
 }
 
+// Data struct of JSON payload for MQTT alerts.
+type MQTTAlertPayload struct {
+	SensorType string    `json:"type"`
+	SensorName string    `json:"name"`
+	Status     string    `json:"status"`
+	Since      time.Time `json:"since"`
+	Err        string    `json:"error"`
+	Msg        string    `json:"message"`
+}
+
 var (
 	config     *Config
 	configFile string
@@ -157,8 +174,10 @@ var (
 		Ping: make(map[string]*PingMonitorData),
 		HTTP: make(map[string]*HTTPMonitorData)}
 
-	uptime     = time.Now()
-	mqttClient mqtt.Client
+	uptime = time.Now()
+
+	monitorMqttClient mqtt.Client
+	alertMqttClient   mqtt.Client
 )
 
 const (
@@ -189,8 +208,46 @@ func main() {
 	panic(http.ListenAndServe(fmt.Sprintf("%s:%d", getConfig().Web.Host, getConfig().Web.Port), nil))
 }
 
+// Set defaults for configuration values.
+func setDefaults(c *Config) {
+	if c.LogSize == 0 {
+		c.LogSize = MAXLOGSIZE
+	}
+	if c.Web.Port == 0 {
+		c.Web.Port = 8080
+	}
+	if c.Monitor.MQTT.History == 0 {
+		c.Monitor.MQTT.History = 10
+	}
+	if c.Monitor.MQTT.Port == 0 {
+		c.Monitor.MQTT.Port = 1883
+	}
+	if c.Monitor.MQTT.StandardTimeout == 0 {
+		c.Monitor.MQTT.StandardTimeout = 1.5
+	}
+	if c.Monitor.Ping.Interval == 0 {
+		c.Monitor.Ping.Interval = 60
+	}
+	if c.Monitor.HTTP.Interval == 0 {
+		c.Monitor.HTTP.Interval = 60
+	}
+	if c.Monitor.HTTP.Timeout == 0 {
+		c.Monitor.HTTP.Timeout = 5000
+	}
+	if c.Alert.MQTT.Port == 0 {
+		c.Alert.MQTT.Port = 1883
+	}
+}
+
 // Loads or reloads the configuration and initializes MQTT and Telegram connections accordingly.
 func loadConfig() {
+
+	// set up initial config for logging and others to work
+	if config == nil {
+		config = new(Config)
+		setDefaults(config)
+	}
+
 	// (re)populate config struct from file
 	yamlFile, err := ioutil.ReadFile(configFile)
 	if err != nil {
@@ -205,30 +262,7 @@ func loadConfig() {
 		log("Unable to load config: " + err.Error())
 	}
 
-	if newconfig.LogSize == 0 {
-		newconfig.LogSize = MAXLOGSIZE
-	}
-	if newconfig.Web.Port == 0 {
-		newconfig.Web.Port = 8080
-	}
-	if newconfig.Monitor.MQTT.History == 0 {
-		newconfig.Monitor.MQTT.History = 10
-	}
-	if newconfig.Monitor.MQTT.Port == 0 {
-		newconfig.Monitor.MQTT.Port = 1883
-	}
-	if newconfig.Monitor.MQTT.StandardTimeout == 0 {
-		newconfig.Monitor.MQTT.StandardTimeout = 1.5
-	}
-	if newconfig.Monitor.Ping.Interval == 0 {
-		newconfig.Monitor.Ping.Interval = 60
-	}
-	if newconfig.Monitor.HTTP.Interval == 0 {
-		newconfig.Monitor.HTTP.Interval = 60
-	}
-	if newconfig.Monitor.HTTP.Timeout == 0 {
-		newconfig.Monitor.HTTP.Timeout = 5000
-	}
+	setDefaults(newconfig)
 
 	configLock.Lock()
 	config = newconfig
@@ -247,9 +281,9 @@ func loadConfig() {
 
 	// connect MQTT if configured
 	if getConfig().Monitor.MQTT.Server != "" {
-		if mqttClient != nil && mqttClient.IsConnected() {
-			mqttClient.Disconnect(1)
-			debug("Disconnected from MQTT")
+		if monitorMqttClient != nil && monitorMqttClient.IsConnected() {
+			monitorMqttClient.Disconnect(1)
+			debug("Disconnected from MQTT (monitoring)")
 		}
 		opts := mqtt.NewClientOptions()
 		opts.AddBroker(fmt.Sprintf("%s://%s:%d", "tcp", getConfig().Monitor.MQTT.Server, getConfig().Monitor.MQTT.Port))
@@ -286,11 +320,11 @@ func loadConfig() {
 			}
 		}
 
-		mqttClient = mqtt.NewClient(opts)
-		if token := mqttClient.Connect(); token.Wait() && token.Error() != nil {
-			log("Unable to connect to MQTT: " + token.Error().Error())
+		monitorMqttClient = mqtt.NewClient(opts)
+		if token := monitorMqttClient.Connect(); token.Wait() && token.Error() != nil {
+			log("Unable to connect to MQTT for monitoring: " + token.Error().Error())
 		} else {
-			log("Connected to MQTT server at " + opts.Servers[0].String())
+			log("Connected to MQTT server for monitoring at " + opts.Servers[0].String())
 		}
 	}
 
@@ -301,6 +335,25 @@ func loadConfig() {
 			log("Unable to connect to Telegram: " + err.Error())
 		}
 		log("Connected to telegram bot")
+	}
+
+	// connect MQTT alert topic if configured
+	if getConfig().Alert.MQTT.Server != "" && getConfig().Alert.MQTT.Topic != "" {
+		if alertMqttClient != nil && alertMqttClient.IsConnected() {
+			alertMqttClient.Disconnect(1)
+			debug("Disconnected from MQTT (alerting)")
+		}
+		opts := mqtt.NewClientOptions()
+		opts.AddBroker(fmt.Sprintf("%s://%s:%d", "tcp", getConfig().Alert.MQTT.Server, getConfig().Alert.MQTT.Port))
+		opts.SetUsername(getConfig().Monitor.MQTT.User)
+		opts.SetPassword(getConfig().Monitor.MQTT.Password)
+		alertMqttClient = mqtt.NewClient(opts)
+		if token := alertMqttClient.Connect(); token.Wait() && token.Error() != nil {
+			log("Unable to connect to MQTT for alerting: " + token.Error().Error())
+		} else {
+			log("Connected to MQTT server for alerting at " + opts.Servers[0].String())
+		}
+
 	}
 }
 
@@ -407,12 +460,12 @@ func evaluateMQTT() {
 		}
 
 		if elapsed > timeout && v.Status == STATUS_OK {
-			alert(fmt.Sprintf("⚠ MQTT ERROR: %s last seen %s ago (timeout %.2fs)", topic, relaTime(v.LastSeen), timeout))
+			alert("MQTT", topic, STATUS_ERROR, v.LastSeen, fmt.Sprintf("timeout %.2fs", timeout))
 			v.LastError = time.Now()
 			v.Alerts++
 			v.Status = STATUS_ERROR
 		} else if elapsed < timeout && v.Status == STATUS_ERROR {
-			alert(fmt.Sprintf("✓ MQTT OK for %s, in error since %s ago", topic, relaTime(v.LastError)))
+			alert("MQTT", topic, STATUS_OK, v.LastError, "")
 			v.Status = STATUS_OK
 		}
 		monitorData.MQTT[topic] = v
@@ -453,7 +506,7 @@ func checkPing() {
 		}
 
 		ts := e.Timestamp
-		
+
 		i := e.Interval
 		if i == 0 {
 			i = target.Interval
@@ -477,7 +530,7 @@ func checkPing() {
 				e.TotalOK++
 				e.LastOK = time.Now()
 				if e.Status == STATUS_ERROR {
-					alert("✓ Ping OK for " + target.Name + ", in error since " + relaTime(e.LastError) + " ago")
+					alert("Ping", target.Name, STATUS_OK, e.LastError, "")
 				}
 				e.Status = STATUS_OK
 			} else {
@@ -487,7 +540,7 @@ func checkPing() {
 				if e.Status == STATUS_OK {
 					e.Status = STATUS_WARN
 				} else if e.Status == STATUS_WARN {
-					alert("⚠ Ping ERROR for " + target.Name + ", last seen " + relaTime(e.LastOK) + " ago")
+					alert("Ping", target.Name, STATUS_ERROR, e.LastOK, "")
 					e.Status = STATUS_ERROR
 				}
 			}
@@ -546,7 +599,7 @@ func checkHTTP() {
 				e.LastOK = time.Now()
 				e.LastValue = val
 				if e.Status == STATUS_ERROR {
-					alert("✓ HTTP OK for " + target.Name + ", in error since " + relaTime(e.LastError) + " ago")
+					alert("HTTP", target.Name, STATUS_OK, e.LastError, "")
 				}
 				e.Status = STATUS_OK
 			} else {
@@ -557,7 +610,7 @@ func checkHTTP() {
 				if e.Status == STATUS_OK {
 					e.Status = STATUS_WARN
 				} else if e.Status == STATUS_WARN {
-					alert("⚠ HTTP ERROR for " + target.Name + ", last seen " + relaTime(e.LastOK) + " ago (" + err + ")")
+					alert("HTTP", target.Name, STATUS_ERROR, e.LastOK, err)
 					e.Status = STATUS_ERROR
 				}
 
@@ -753,7 +806,7 @@ func configWebItem(w http.ResponseWriter, r *http.Request) {
 					monitorData.Unlock()
 					evaluateMQTT()
 				}
-			}			
+			}
 		case "ping":
 			if len(r.Form["interval"]) > 0 {
 				if v, err := strconv.ParseUint(r.Form["interval"][0], 10, 64); err != nil {
@@ -763,7 +816,7 @@ func configWebItem(w http.ResponseWriter, r *http.Request) {
 					monitorData.Ping[f].Interval = int(v)
 					monitorData.Unlock()
 				}
-			}			
+			}
 		case "http":
 			if len(r.Form["interval"]) > 0 {
 				if v, err := strconv.ParseUint(r.Form["interval"][0], 10, 64); err != nil {
@@ -782,15 +835,30 @@ func configWebItem(w http.ResponseWriter, r *http.Request) {
 					monitorData.HTTP[f].Timeout = int(v)
 					monitorData.Unlock()
 				}
-			}	
+			}
 		}
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 // Published an alert message via the methods configured.
-func alert(s string) {
+func alert(sensorType string, sensorName string, status int, since time.Time, msg string) {
+
+	// construct and post text alert
+	var s string
+
+	switch status {
+	case STATUS_OK:
+		s = fmt.Sprintf("✓ %s OK for %s, in eror since %s ago", sensorType, sensorName, relaTime(since))
+	case STATUS_ERROR:
+		s = fmt.Sprintf("⚠ %s ERROR for %s, last seen %s ago", sensorType, sensorName, relaTime(since))
+		if msg != "" {
+			s = s + fmt.Sprintf(" (%s)", msg)
+		}
+	}
+
 	log(s)
+
 	if getConfig().Alert.Telegram.Token != "" && getConfig().Alert.Telegram.Chat != 0 && tgbot != nil {
 		if _, err := tgbot.Send(tgbotapi.NewMessage(getConfig().Alert.Telegram.Chat, s)); err != nil {
 			log("Error sending to telegram: " + err.Error())
@@ -811,6 +879,23 @@ func alert(s string) {
 		if err := cmd.Run(); err != nil {
 			log("Error in executing " + getConfig().Alert.Exec + ": " + err.Error())
 		}
+	}
+
+	// construct and post json payload for MQTT target
+	if getConfig().Alert.MQTT.Server != "" && getConfig().Alert.MQTT.Topic != "" && alertMqttClient != nil {
+		payload := MQTTAlertPayload{sensorType, sensorName, "", since, msg, s}
+		switch status {
+		case STATUS_OK:
+			payload.Status = "OK"
+		case STATUS_ERROR:
+			payload.Status = "ERROR"
+		}
+		b, err := json.Marshal(payload)
+		if err != nil {
+			log("Unable to compile payload for MQTT alert: " + err.Error())
+			return
+		}
+		alertMqttClient.Publish(getConfig().Alert.MQTT.Topic, 0, false, b)
 	}
 }
 
