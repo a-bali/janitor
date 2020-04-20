@@ -849,7 +849,7 @@ func alert(sensorType string, sensorName string, status int, since time.Time, ms
 
 	switch status {
 	case STATUS_OK:
-		s = fmt.Sprintf("✓ %s OK for %s, in eror since %s ago", sensorType, sensorName, relaTime(since))
+		s = fmt.Sprintf("✓ %s OK for %s, in error since %s ago", sensorType, sensorName, relaTime(since))
 	case STATUS_ERROR:
 		s = fmt.Sprintf("⚠ %s ERROR for %s, last seen %s ago", sensorType, sensorName, relaTime(since))
 		if msg != "" {

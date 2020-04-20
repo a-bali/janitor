@@ -16,4 +16,5 @@ RUN CGO_ENABLED=0 GOOS=linux go build
 FROM alpine:latest
 WORKDIR /janitor
 COPY --from=builder /app/app ./
+EXPOSE 8080
 ENTRYPOINT ["/janitor/app", "/janitor/config.yml"]
