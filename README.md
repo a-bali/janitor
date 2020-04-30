@@ -15,7 +15,11 @@ Janitor currently supports the following alert methods:
 * **MQTT:** Janitor will publish a message to a preconfigured topic on a preconfigured MQTT server. The message will contain a JSON payload (see sample config for example). This is suitable for automations e.g. in HASS.
 * **Exec:** Janitor will execute a preconfigured command. This enables creating any type of custom alerting method.
 
-Additionally, Janitor has a web interface where you can see the current status and historical data, remove items, change timeout and interval values and reload the configuration file (see screenshot below).
+Additionally, Janitor has a web interface where you can see the current status and historical data, remove items, change timeouts, intervals and thresholds and reload the configuration file (see screenshot below).
+
+Finally, Janitor includes a simple JSON api with the following endpoints:
+* `/api/data` provides a snapshot of all monitoring related data.
+* `/api/stats` provides the count of monitoring targets in functional/dysfunctional state.
 
 ## Screenshot
 ![Screenshot](https://raw.githubusercontent.com/a-bali/janitor/master/docs/screenshot.png)

@@ -102,8 +102,8 @@ type MQTTMonitorData struct {
 	LastError     time.Time
 	LastPayload   string
 	History       []TimedEntry
-	AvgTransmit   float64
-	Timeout       float64
+	AvgTransmit   float64 `json:"-"`
+	Timeout       float64 `json:"-"`
 	CustomTimeout float64
 	Status        int32
 	Samples       int64
@@ -168,6 +168,12 @@ type MQTTAlertPayload struct {
 	Msg        string    `json:"message"`
 }
 
+// Data struct of JSON payload for api/stats.
+type StatsData struct {
+	OkCount  int `json:"ok"`
+	ErrCount int `json:"error"`
+}
+
 var (
 	config     *Config
 	configFile string
@@ -214,6 +220,8 @@ func main() {
 	http.HandleFunc("/reload_config", reloadConfig)
 	http.HandleFunc("/delete", deleteWebItem)
 	http.HandleFunc("/config", configWebItem)
+	http.HandleFunc("/api/stats", serveAPIStats)
+	http.HandleFunc("/api/data", serveAPIData)
 	panic(http.ListenAndServe(fmt.Sprintf("%s:%d", getConfig().Web.Host, getConfig().Web.Port), nil))
 }
 
@@ -289,7 +297,7 @@ func loadConfig() {
 	monitorData.Lock()
 
 	// remove deleted MQTT targets
-	for k, _ := range monitorData.MQTT {
+	for k := range monitorData.MQTT {
 		if monitorData.MQTT[k].Deleted {
 			delete(monitorData.MQTT, k)
 		}
@@ -803,6 +811,47 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 
 	monitorData.RUnlock()
 	logLock.RUnlock()
+}
+
+// Serves the api/stats page.
+func serveAPIStats(w http.ResponseWriter, r *http.Request) {
+	debug("Web request " + r.RequestURI + " from " + r.RemoteAddr)
+	o := 0
+	e := 0
+	monitorData.RLock()
+	for k := range monitorData.MQTT {
+		if monitorData.MQTT[k].Status == STATUS_ERROR {
+			e++
+		} else {
+			o++
+		}
+	}
+	for k := range monitorData.Ping {
+		if monitorData.Ping[k].Status == STATUS_ERROR {
+			e++
+		} else {
+			o++
+		}
+	}
+	for k := range monitorData.HTTP {
+		if monitorData.HTTP[k].Status == STATUS_ERROR {
+			e++
+		} else {
+			o++
+		}
+	}
+	monitorData.RUnlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(StatsData{o, e})
+}
+
+// Serves the api/data page.
+func serveAPIData(w http.ResponseWriter, r *http.Request) {
+	debug("Web request " + r.RequestURI + " from " + r.RemoteAddr)
+	monitorData.RLock()
+	defer monitorData.RUnlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(monitorData)
 }
 
 // Reloads the config based on web request.
