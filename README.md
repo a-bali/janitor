@@ -6,8 +6,8 @@ Janitor does not aim to implement any additional functionalities, therefore is n
 
 Janitor currently supports the following monitoring methods:
 * **MQTT:** Janitor will subscribe to predefined MQTT topics and monitor incoming messages. An average transmit frequency will be calculated for each channel and in case no new messages are received within this interval, Janitor will alert you (the threshold can be configured as a multiple of the average frequency or as absolute values per topic). This method is particulary useful for any kind of sensors submitting data regularly via MQTT (e.g. temperature).
-* **Ping:** Janitor will ping predefined hosts with a predefined frequency (configurable on a per host basis) and will alert you in case of no reply (the threshold used is 2 consecutively missed pings). This method is useful for any kind of IOT devices e.g. sensors, cameras etc.
-* **HTTP:** Janitor will send a HTTP GET request to predefined addresses and check for reply, and, optionally, whether the reply contains a predefined string. Janitor will alert you in case of 2 consecutively unsuccessful requests. The frequency and timeout are configurable per address. This method is useful for any kind of services with a web interface (e.g. APIs, hosted services etc.).
+* **Ping:** Janitor will ping predefined hosts with a predefined frequency (configurable on a per host basis) and will alert you in case of no reply (the threshold used for consecutively missed pings can be configured). This method is useful for any kind of IOT devices e.g. sensors, cameras etc.
+* **HTTP:** Janitor will send a HTTP GET request to predefined addresses and check for reply, and, optionally, whether the reply contains a predefined string. Janitor will alert you in case of consecutively unsuccessful requests above the configured threshold. The frequency and timeout are also configurable per address. This method is useful for any kind of services with a web interface (e.g. APIs, hosted services etc.).
 
 Janitor currently supports the following alert methods:
 * **Telegram:** Janitor will send a message to a predefined Telegram channel.
@@ -43,6 +43,18 @@ This will create the standalone binary named `janitor` that you can place anywhe
 ## Configuration and usage
 
 For configuration, a YAML formatted file is required. Please use the [sample configuration file](https://raw.githubusercontent.com/a-bali/janitor/master/config.yml) and change it according to your needs, following the comments in the file. Most of the variables are optional and have reasonable defaults, for details please see the comments.
+
+A minimal but already operational configuration can be as short as follows (assuming Janitor's web interface will be available on its default port which is 8080):
+
+    monitor:
+      mqtt:
+        server: mymqtt.server
+        targets:
+        - topic: "/sensors/#"
+    alert:
+      gotify:
+        server: "http://mygotify.server:1234"
+        token: gotify_token
 
 Once you created a configuration file, Janitor can be launched as follows:
 

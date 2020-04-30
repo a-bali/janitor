@@ -49,12 +49,14 @@ monitor:
      - topic: "/sensors/#"
      - topic: "/stats/#"
 
-
   # Ping monitoring
   ping:
     # Default interval between checks in seconds (default: 60)
     # (can be overridden per target below)
     interval: 60
+    # Threshold for alerts - number of consecutive misses to reach (default: 2)
+    # (can be overridden per target below)
+    threshold: 2
     # Targets to ping
     targets:
       # Name of the target (used for display and alerting)
@@ -63,10 +65,10 @@ monitor:
       address: openwrt.lan
       # Interval between checks in seconds (default: default interval specified above)
       interval: 10
+      # Threshold for alerts - number of consecutive misses to reach (default: default threshold specified above)
+      threshold: 3
     - name: google
       address: google.com
-
-
 
   # HTTP monitoring
   http:
@@ -76,6 +78,9 @@ monitor:
     # Default timeout for the HTTP requests in milliseconds (default: 5000)
     # (can be overridden per target below)
     timeout: 5000
+    # Threshold for alerts - number of consecutive misses to reach (default: 2)
+    # (can be overridden per target below)
+    threshold: 2
     # Targets to monitor with HTTP GET
     targets:
       # Name of the target (used for display and alerting)
@@ -88,6 +93,8 @@ monitor:
       interval: 10
       # Timeout for the HTTP requests in milliseconds (default: default interval specified above)
       timeout: 500
+      # Threshold for alerts - number of consecutive misses to reach (default: default threshold specified above)
+      threshold: 3
     - name: google
       address: http://google.com
 

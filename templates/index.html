@@ -179,6 +179,7 @@
 				<th>Host name</th>
 				<th>Address</th>
 				<th>Interval</th>
+				<th>Threshold</th>
 				<th>Last OK</th>
 				<th>Last error</th>
 				<th>Total OK packets</th>
@@ -199,15 +200,26 @@
 				</td>
 				<td class="name"> {{ $host }} </td>
 				<td> 
-					<form id="config_ping_{{ id $host }}" method="post" action="/config">
+					<form id="config_ping_1_{{ id $host }}" method="post" action="/config">
 						<input type="hidden" name="type" value="ping">
 						<input type="hidden" name="name" value="{{ $host }}">
 						<input type="hidden" name="interval" value=0>
 					</form>
-					<a href="javascript:submitConfig('config_ping_{{ id $host }}', 'interval', '{{ $value.Interval }}')">
+					<a href="javascript:submitConfig('config_ping_1_{{ id $host }}', 'interval', '{{ $value.Interval }}')">
 						{{ $value.Interval }}
 					</a>
 				</td>
+				<td>
+					<form id="config_ping_2_{{ id $host }}" method="post" action="/config">
+						<input type="hidden" name="type" value="ping">
+						<input type="hidden" name="name" value="{{ $host }}">
+						<input type="hidden" name="threshold" value=0>
+					</form>
+					<a href="javascript:submitConfig('config_ping_2_{{ id $host }}', 'threshold', '{{ $value.Threshold }}')">
+						{{ $value.Threshold }}
+					</a>
+				</td>
+
 				<td>
 					{{ if not $value.LastOK.IsZero }}
 					<span class="datetime">{{ $value.LastOK.Format "2006-01-02 15:04:05" }}</span>
@@ -237,6 +249,7 @@
 				<th>Address</th>
 				<th>Interval</th>
 				<th>Timeout</th>
+				<th>Threshold</th>
 				<th>Last OK</th>
 				<th>Last error</th>
 				<th>Total OK requests</th>
@@ -257,7 +270,11 @@
 					{{ $value.Name }}
 					<span class="delete">(<a href="javascript:submitDelete('delete_http_{{ id $host }}')">x</a>)</span>
 				</td>
-				<td class="name"> {{ $host }} </td>
+				<td class="name">
+					<a href="{{ $host }}">
+						{{ $host }}
+					</a>
+				</td>
 				<td>
 					<form id="config_http_1_{{ id $host }}" method="post" action="/config">
 						<input type="hidden" name="type" value="http">
@@ -276,6 +293,16 @@
 					</form>
 					<a href="javascript:submitConfig('config_http_2_{{ id $host }}', 'timeout', '{{ $value.Timeout }}')">
 						{{ $value.Timeout }}
+					</a>
+				</td>
+				<td>
+					<form id="config_http_3_{{ id $host }}" method="post" action="/config">
+						<input type="hidden" name="type" value="http">
+						<input type="hidden" name="name" value="{{ $host }}">
+						<input type="hidden" name="threshold" value=0>
+					</form>
+					<a href="javascript:submitConfig('config_http_3_{{ id $host }}', 'threshold', '{{ $value.Threshold }}')">
+						{{ $value.Threshold }}
 					</a>
 				</td>
 				<td>

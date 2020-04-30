@@ -64,22 +64,26 @@ type Config struct {
 		}
 
 		Ping struct {
-			Interval int
-			Targets  []struct {
-				Name     string
-				Address  string
-				Interval int
+			Interval  int
+			Threshold int
+			Targets   []struct {
+				Name      string
+				Address   string
+				Interval  int
+				Threshold int
 			}
 		}
 		HTTP struct {
-			Interval int
-			Timeout  int
-			Targets  []struct {
-				Name     string
-				Address  string
-				Value    string
-				Interval int
-				Timeout  int
+			Interval  int
+			Timeout   int
+			Threshold int
+			Targets   []struct {
+				Name      string
+				Address   string
+				Value     string
+				Interval  int
+				Timeout   int
+				Threshold int
 			}
 		}
 	}
@@ -114,22 +118,27 @@ type PingMonitorData struct {
 	Status     int32
 	TotalOK    int64
 	TotalError int64
+	Errors     int
 	Timestamp  time.Time
 	Interval   int
+	Threshold  int
 }
 
 type HTTPMonitorData struct {
 	Name           string
 	LastOK         time.Time
 	LastError      time.Time
+	Value          string
 	LastValue      string
 	LastErrorValue string
 	Status         int32
 	TotalOK        int64
 	TotalError     int64
+	Errors         int
 	Timestamp      time.Time
 	Interval       int
 	Timeout        int
+	Threshold      int
 }
 
 // MonitorData stores the actual status data of the monitoring process.
@@ -228,11 +237,17 @@ func setDefaults(c *Config) {
 	if c.Monitor.Ping.Interval == 0 {
 		c.Monitor.Ping.Interval = 60
 	}
+	if c.Monitor.Ping.Threshold == 0 {
+		c.Monitor.Ping.Threshold = 2
+	}
 	if c.Monitor.HTTP.Interval == 0 {
 		c.Monitor.HTTP.Interval = 60
 	}
 	if c.Monitor.HTTP.Timeout == 0 {
 		c.Monitor.HTTP.Timeout = 5000
+	}
+	if c.Monitor.HTTP.Threshold == 0 {
+		c.Monitor.HTTP.Threshold = 2
 	}
 	if c.Alert.MQTT.Port == 0 {
 		c.Alert.MQTT.Port = 1883
@@ -270,13 +285,93 @@ func loadConfig() {
 
 	debug("Loaded config: " + fmt.Sprintf("%+v", getConfig()))
 
-	// remove deleted MQTT targets
+	// update monitor targets based on new configuration
 	monitorData.Lock()
+
+	// remove deleted MQTT targets
 	for k, _ := range monitorData.MQTT {
 		if monitorData.MQTT[k].Deleted {
 			delete(monitorData.MQTT, k)
 		}
 	}
+
+	// update monitored ping hosts
+	for _, target := range getConfig().Monitor.Ping.Targets {
+		e, ok := monitorData.Ping[target.Address]
+		if !ok {
+			monitorData.Ping[target.Address] = &PingMonitorData{}
+			e = monitorData.Ping[target.Address]
+		}
+		e.Name = target.Name
+		if target.Interval != 0 {
+			e.Interval = target.Interval
+		} else if e.Interval == 0 {
+			e.Interval = getConfig().Monitor.Ping.Interval
+		}
+		if target.Threshold != 0 {
+			e.Threshold = target.Threshold
+		} else if e.Threshold == 0 {
+			e.Threshold = getConfig().Monitor.Ping.Threshold
+		}
+		monitorData.Ping[target.Address] = e
+	}
+
+	// remove deleted ping hosts from monitoring
+	for k := range monitorData.Ping {
+		found := false
+		for _, c := range getConfig().Monitor.Ping.Targets {
+			if k == c.Address {
+				found = true
+				break
+			}
+		}
+		if !found {
+			delete(monitorData.Ping, k)
+		}
+	}
+
+	// update monitored http hosts
+	for _, target := range getConfig().Monitor.HTTP.Targets {
+
+		e, ok := monitorData.HTTP[target.Address]
+		if !ok {
+			monitorData.HTTP[target.Address] = &HTTPMonitorData{}
+			e = monitorData.HTTP[target.Address]
+		}
+		e.Name = target.Name
+		if target.Interval != 0 {
+			e.Interval = target.Interval
+		} else if e.Interval == 0 {
+			e.Interval = getConfig().Monitor.HTTP.Interval
+		}
+		if target.Timeout != 0 {
+			e.Timeout = target.Timeout
+		} else if e.Timeout == 0 {
+			e.Timeout = getConfig().Monitor.HTTP.Timeout
+		}
+		if target.Threshold != 0 {
+			e.Threshold = target.Threshold
+		} else if e.Threshold == 0 {
+			e.Threshold = getConfig().Monitor.HTTP.Threshold
+		}
+		e.Value = target.Value
+		monitorData.HTTP[target.Address] = e
+	}
+
+	// remove deleted http hosts from monitoring
+	for k := range monitorData.HTTP {
+		found := false
+		for _, c := range getConfig().Monitor.HTTP.Targets {
+			if k == c.Address {
+				found = true
+				break
+			}
+		}
+		if !found {
+			delete(monitorData.HTTP, k)
+		}
+	}
+
 	monitorData.Unlock()
 
 	// connect MQTT if configured
@@ -459,13 +554,19 @@ func evaluateMQTT() {
 			continue
 		}
 
-		if elapsed > timeout && v.Status == STATUS_OK {
-			alert("MQTT", topic, STATUS_ERROR, v.LastSeen, fmt.Sprintf("timeout %.2fs", timeout))
-			v.LastError = time.Now()
-			v.Alerts++
+		if elapsed > timeout {
+			if v.Status != STATUS_ERROR {
+				alert("MQTT", topic, STATUS_ERROR, v.LastSeen, fmt.Sprintf("timeout %.2fs", timeout))
+				v.LastError = time.Now()
+				v.Alerts++
+			}
 			v.Status = STATUS_ERROR
-		} else if elapsed < timeout && v.Status == STATUS_ERROR {
-			alert("MQTT", topic, STATUS_OK, v.LastError, "")
+		} else if v.AvgTransmit > 0 && elapsed > v.AvgTransmit {
+			v.Status = STATUS_WARN
+		} else {
+			if v.Status == STATUS_ERROR {
+				alert("MQTT", topic, STATUS_OK, v.LastError, "")
+			}
 			v.Status = STATUS_OK
 		}
 		monitorData.MQTT[topic] = v
@@ -494,57 +595,42 @@ func matchMQTTTopic(pattern string, subject string) bool {
 
 // Periodically iterate through ping targets and perform check if required.
 func checkPing() {
-	for _, target := range getConfig().Monitor.Ping.Targets {
-
-		monitorData.Lock()
-
-		e, ok := monitorData.Ping[target.Address]
-		if !ok {
-			monitorData.Ping[target.Address] = &PingMonitorData{}
-			e = monitorData.Ping[target.Address]
-			e.Name = target.Name
-		}
-
+	monitorData.RLock()
+	defer monitorData.RUnlock()
+	for address, e := range monitorData.Ping {
 		ts := e.Timestamp
-
-		i := e.Interval
-		if i == 0 {
-			i = target.Interval
-		}
-		if i == 0 {
-			i = getConfig().Monitor.Ping.Interval
-		}
-		e.Interval = i
-
-		monitorData.Unlock()
-
 		// proceed only if last check (regardless of outcome) was before now minus the configured interval
-		if ts.Add(time.Duration(i) * time.Second).Before(time.Now()) {
+		if ts.Add(time.Duration(e.Interval) * time.Second).Before(time.Now()) {
 
-			r := ping(target.Address)
-			debug(fmt.Sprintf("Pinging %s: %t", target.Address, r))
+			r := ping(address)
+			debug(fmt.Sprintf("Pinging %s: %t", address, r))
 
+			monitorData.RUnlock()
 			monitorData.Lock()
 			e.Timestamp = time.Now()
 			if r {
 				e.TotalOK++
 				e.LastOK = time.Now()
+				e.Errors = 0
 				if e.Status == STATUS_ERROR {
-					alert("Ping", target.Name, STATUS_OK, e.LastError, "")
+					alert("Ping", e.Name, STATUS_OK, e.LastError, "")
 				}
 				e.Status = STATUS_OK
 			} else {
+				e.Errors++
 				e.TotalError++
 				e.LastError = time.Now()
-				// First error will set STATUS_WARN, the second will set STATUS_ERROR
+				// First error will set STATUS_WARN, error will be triggered after the threshold
 				if e.Status == STATUS_OK {
 					e.Status = STATUS_WARN
-				} else if e.Status == STATUS_WARN {
-					alert("Ping", target.Name, STATUS_ERROR, e.LastOK, "")
+				}
+				if e.Status == STATUS_WARN && e.Errors >= e.Threshold {
+					alert("Ping", e.Name, STATUS_ERROR, e.LastOK, "")
 					e.Status = STATUS_ERROR
 				}
 			}
 			monitorData.Unlock()
+			monitorData.RLock()
 
 		}
 
@@ -553,69 +639,45 @@ func checkPing() {
 
 // Periodically iterate through HTTP targets and perform check if required.
 func checkHTTP() {
-	for _, target := range getConfig().Monitor.HTTP.Targets {
-
-		monitorData.Lock()
-
-		e, ok := monitorData.HTTP[target.Address]
-		if !ok {
-			monitorData.HTTP[target.Address] = &HTTPMonitorData{}
-			e = monitorData.HTTP[target.Address]
-			e.Name = target.Name
-		}
-
+	monitorData.RLock()
+	defer monitorData.RUnlock()
+	for address, e := range monitorData.HTTP {
 		ts := e.Timestamp
-		i := e.Interval
-		timeout := e.Timeout
-
-		if i == 0 {
-			i = target.Interval
-		}
-		if i == 0 {
-			i = getConfig().Monitor.Ping.Interval
-		}
-
-		if timeout == 0 {
-			timeout = target.Timeout
-		}
-		if timeout == 0 {
-			timeout = getConfig().Monitor.HTTP.Timeout
-		}
-
-		e.Interval = i
-		e.Timeout = timeout
-		monitorData.Unlock()
-
 		// proceed only if last check (regardless of outcome) was before now minus the configured interval
-		if ts.Add(time.Duration(i) * time.Second).Before(time.Now()) {
+		if ts.Add(time.Duration(e.Interval) * time.Second).Before(time.Now()) {
 
-			r, err, val := performHTTPCheck(target.Address, target.Value, timeout)
-			debug(fmt.Sprintf("HTTP request %s: %t %s", target.Address, r, err))
+			r, err, val := performHTTPCheck(address, e.Value, e.Timeout)
+			debug(fmt.Sprintf("HTTP request %s: %t %s", address, r, err))
 
+			monitorData.RUnlock()
 			monitorData.Lock()
 			e.Timestamp = time.Now()
 			if r {
 				e.TotalOK++
 				e.LastOK = time.Now()
 				e.LastValue = val
+				e.Errors = 0
 				if e.Status == STATUS_ERROR {
-					alert("HTTP", target.Name, STATUS_OK, e.LastError, "")
+					alert("HTTP", e.Name, STATUS_OK, e.LastError, "")
 				}
 				e.Status = STATUS_OK
 			} else {
+				e.Errors++
 				e.TotalError++
 				e.LastError = time.Now()
 				e.LastErrorValue = err
-				// First error will set STATUS_WARN, the second will set STATUS_ERROR
+				// First error will set STATUS_WARN, error will be triggered after the threshold
 				if e.Status == STATUS_OK {
 					e.Status = STATUS_WARN
-				} else if e.Status == STATUS_WARN {
-					alert("HTTP", target.Name, STATUS_ERROR, e.LastOK, err)
+				}
+				if e.Status == STATUS_WARN && e.Errors >= e.Threshold {
+					alert("HTTP", e.Name, STATUS_ERROR, e.LastOK, err)
 					e.Status = STATUS_ERROR
 				}
 
 			}
 			monitorData.Unlock()
+			monitorData.RLock()
 		}
 
 	}
@@ -812,16 +874,35 @@ func configWebItem(w http.ResponseWriter, r *http.Request) {
 				if v, err := strconv.ParseUint(r.Form["interval"][0], 10, 64); err != nil {
 					log("Unable to parse requested interval: " + r.Form["interval"][0])
 				} else {
+					if v == 0 {
+						v = uint64(getConfig().Monitor.Ping.Interval)
+					}
 					monitorData.Lock()
 					monitorData.Ping[f].Interval = int(v)
 					monitorData.Unlock()
 				}
 			}
+			if len(r.Form["threshold"]) > 0 {
+				if v, err := strconv.ParseUint(r.Form["threshold"][0], 10, 64); err != nil {
+					log("Unable to parse requested threshold: " + r.Form["threshold"][0])
+				} else {
+					if v == 0 {
+						v = uint64(getConfig().Monitor.Ping.Threshold)
+					}
+					monitorData.Lock()
+					monitorData.Ping[f].Threshold = int(v)
+					monitorData.Unlock()
+				}
+			}
+
 		case "http":
 			if len(r.Form["interval"]) > 0 {
 				if v, err := strconv.ParseUint(r.Form["interval"][0], 10, 64); err != nil {
 					log("Unable to parse requested interval: " + r.Form["interval"][0])
 				} else {
+					if v == 0 {
+						v = uint64(getConfig().Monitor.HTTP.Interval)
+					}
 					monitorData.Lock()
 					monitorData.HTTP[f].Interval = int(v)
 					monitorData.Unlock()
@@ -831,11 +912,27 @@ func configWebItem(w http.ResponseWriter, r *http.Request) {
 				if v, err := strconv.ParseUint(r.Form["timeout"][0], 10, 64); err != nil {
 					log("Unable to parse requested timeout: " + r.Form["timeout"][0])
 				} else {
+					if v == 0 {
+						v = uint64(getConfig().Monitor.HTTP.Timeout)
+					}
 					monitorData.Lock()
 					monitorData.HTTP[f].Timeout = int(v)
 					monitorData.Unlock()
 				}
 			}
+			if len(r.Form["threshold"]) > 0 {
+				if v, err := strconv.ParseUint(r.Form["threshold"][0], 10, 64); err != nil {
+					log("Unable to parse requested threshold: " + r.Form["threshold"][0])
+				} else {
+					if v == 0 {
+						v = uint64(getConfig().Monitor.HTTP.Threshold)
+					}
+					monitorData.Lock()
+					monitorData.HTTP[f].Threshold = int(v)
+					monitorData.Unlock()
+				}
+			}
+
 		}
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
