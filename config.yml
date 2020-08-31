@@ -93,10 +93,27 @@ monitor:
       interval: 10
       # Timeout for the HTTP requests in milliseconds (default: default interval specified above)
       timeout: 500
-      # Threshold for alerts - number of consecutive misses to reach (default: default threshold specified above)
+      # Threshold for alerts - number of consecutive failed requests to reach (default: default threshold specified above)
       threshold: 3
     - name: google
       address: http://google.com
+
+  # Monitoring by executing an external command
+  exec:
+    # Default interval between checks in seconds (default: 60)
+    # (can be overridden per target below)
+    interval: 60
+    # Default timeout for the command to complete in milliseconds (default: 5000).
+    # The execution will be terminated and marked as failed when this timeout is reached.
+    timeout: 5000
+    # Threshold for alerts - number of consecutive failed commands to reach (default: 2)
+    # (can be overridden per target below)
+    threshold: 2
+    targets:
+      # Name of the target (used for display and alerting)
+    - name: check if /tmp/foo exists
+      # Command to be executed. On Linux, this will be given to a shell process.
+      command: test -f /tmp/foo
 
 ### ALERTING METHODS
 ### All these blocks are optional. If missing, will not be used for alerting.
@@ -122,7 +139,7 @@ alert:
 
   # Alerting by posting to predefined MQTT topic with a JSON payload. Example payload with description of the structure:
   # {"type":"HTTP",                                      // type of the sensor - potential values: HTTP, Ping, MQTT
-  #  "name":"NAS",                                       // name of the senror
+  #  "name":"NAS",                                       // name of the sensor
   #  "status":"ERROR",                                   // status of the sensor - potential values: OK, ERROR
   #  "since":"2020-03-22T18:58:00.157284409+01:00",      // last error/ok timestamp for sensor
   #  "error":"",                                         // further error message if any

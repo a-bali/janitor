@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -86,6 +87,18 @@ type Config struct {
 				Threshold int
 			}
 		}
+		Exec struct {
+			Interval  int
+			Timeout   int
+			Threshold int
+			Targets   []struct {
+				Name      string
+				Command   string
+				Interval  int
+				Timeout   int
+				Threshold int
+			}
+		}
 	}
 }
 
@@ -141,11 +154,26 @@ type HTTPMonitorData struct {
 	Threshold      int
 }
 
+type ExecMonitorData struct {
+	Name       string
+	LastOK     time.Time
+	LastError  time.Time
+	Status     int32
+	TotalOK    int64
+	TotalError int64
+	Errors     int
+	Timestamp  time.Time
+	Interval   int
+	Timeout    int
+	Threshold  int
+}
+
 // MonitorData stores the actual status data of the monitoring process.
 type MonitorData struct {
 	MQTT map[string]*MQTTMonitorData
 	Ping map[string]*PingMonitorData
 	HTTP map[string]*HTTPMonitorData
+	Exec map[string]*ExecMonitorData
 	sync.RWMutex
 }
 
@@ -187,7 +215,8 @@ var (
 	monitorData = MonitorData{
 		MQTT: make(map[string]*MQTTMonitorData),
 		Ping: make(map[string]*PingMonitorData),
-		HTTP: make(map[string]*HTTPMonitorData)}
+		HTTP: make(map[string]*HTTPMonitorData),
+		Exec: make(map[string]*ExecMonitorData)}
 
 	uptime = time.Now()
 
@@ -256,6 +285,15 @@ func setDefaults(c *Config) {
 	}
 	if c.Monitor.HTTP.Threshold == 0 {
 		c.Monitor.HTTP.Threshold = 2
+	}
+	if c.Monitor.Exec.Interval == 0 {
+		c.Monitor.Exec.Interval = 60
+	}
+	if c.Monitor.Exec.Timeout == 0 {
+		c.Monitor.Exec.Timeout = 5000
+	}
+	if c.Monitor.Exec.Threshold == 0 {
+		c.Monitor.Exec.Threshold = 2
 	}
 	if c.Alert.MQTT.Port == 0 {
 		c.Alert.MQTT.Port = 1883
@@ -380,6 +418,46 @@ func loadConfig() {
 		}
 	}
 
+	// update monitored exec targets
+	for _, target := range getConfig().Monitor.Exec.Targets {
+
+		e, ok := monitorData.Exec[target.Command]
+		if !ok {
+			monitorData.Exec[target.Command] = &ExecMonitorData{}
+			e = monitorData.Exec[target.Command]
+		}
+		e.Name = target.Name
+		if target.Interval != 0 {
+			e.Interval = target.Interval
+		} else if e.Interval == 0 {
+			e.Interval = getConfig().Monitor.Exec.Interval
+		}
+		if target.Timeout != 0 {
+			e.Timeout = target.Timeout
+		} else if e.Timeout == 0 {
+			e.Timeout = getConfig().Monitor.Exec.Timeout
+		}
+		if target.Threshold != 0 {
+			e.Threshold = target.Threshold
+		} else if e.Threshold == 0 {
+			e.Threshold = getConfig().Monitor.Exec.Threshold
+		}
+		monitorData.Exec[target.Command] = e
+	}
+
+	// remove deleted exec targets from monitoring
+	for k := range monitorData.Exec {
+		found := false
+		for _, c := range getConfig().Monitor.Exec.Targets {
+			if k == c.Command {
+				found = true
+				break
+			}
+		}
+		if !found {
+			delete(monitorData.Exec, k)
+		}
+	}
 	monitorData.Unlock()
 
 	// connect MQTT if configured
@@ -523,6 +601,14 @@ func monitoringLoop() {
 			time.Sleep(time.Second)
 		}
 	}()
+
+	go func() {
+		for {
+			checkExec()
+			time.Sleep(time.Second)
+		}
+	}()
+
 }
 
 // Periodically evaluate MQTT monitoring targets and issue alerts/recoveries as needed.
@@ -610,11 +696,11 @@ func checkPing() {
 		// proceed only if last check (regardless of outcome) was before now minus the configured interval
 		if ts.Add(time.Duration(e.Interval) * time.Second).Before(time.Now()) {
 
+			monitorData.RUnlock()
 			r := ping(address)
 			debug(fmt.Sprintf("Pinging %s: %t", address, r))
-
-			monitorData.RUnlock()
 			monitorData.Lock()
+
 			e.Timestamp = time.Now()
 			if r {
 				e.TotalOK++
@@ -654,11 +740,11 @@ func checkHTTP() {
 		// proceed only if last check (regardless of outcome) was before now minus the configured interval
 		if ts.Add(time.Duration(e.Interval) * time.Second).Before(time.Now()) {
 
+			monitorData.RUnlock()
 			r, err, val := performHTTPCheck(address, e.Value, e.Timeout)
 			debug(fmt.Sprintf("HTTP request %s: %t %s", address, r, err))
-
-			monitorData.RUnlock()
 			monitorData.Lock()
+
 			e.Timestamp = time.Now()
 			if r {
 				e.TotalOK++
@@ -688,6 +774,77 @@ func checkHTTP() {
 			monitorData.RLock()
 		}
 
+	}
+}
+
+// Periodically iterate through exec targets and perform check if required.
+func checkExec() {
+	monitorData.RLock()
+	defer monitorData.RUnlock()
+	for command, e := range monitorData.Exec {
+		ts := e.Timestamp
+		// proceed only if last check (regardless of outcome) was before now minus the configured interval
+		if ts.Add(time.Duration(e.Interval) * time.Second).Before(time.Now()) {
+
+			monitorData.RUnlock()
+			r := performExecCheck(command, e.Timeout)
+			monitorData.Lock()
+
+			e.Timestamp = time.Now()
+			if r {
+				e.TotalOK++
+				e.LastOK = time.Now()
+
+				e.Errors = 0
+				if e.Status == STATUS_ERROR {
+					alert("Exec", e.Name, STATUS_OK, e.LastError, "")
+				}
+				e.Status = STATUS_OK
+			} else {
+				e.Errors++
+				e.TotalError++
+				e.LastError = time.Now()
+
+				// First error will set STATUS_WARN, error will be triggered after the threshold
+				if e.Status == STATUS_OK {
+					e.Status = STATUS_WARN
+				}
+				if e.Status == STATUS_WARN && e.Errors >= e.Threshold {
+					alert("Exec", e.Name, STATUS_ERROR, e.LastOK, "")
+					e.Status = STATUS_ERROR
+				}
+
+			}
+			monitorData.Unlock()
+			monitorData.RLock()
+		}
+
+	}
+}
+
+// Perform exec check for a single target.
+// Return false in case of error or timeout.
+func performExecCheck(command string, timeout int) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Millisecond)
+	defer cancel()
+
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, command)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-c", command)
+	}
+	out, err := cmd.Output()
+	debug(fmt.Sprintf("Exec %s output: %s", command, out))
+	if ctx.Err() == context.DeadlineExceeded {
+		debug(fmt.Sprintf("Exec %s: timeout exceeded", command))
+		return false
+	} else if err != nil {
+		debug(fmt.Sprintf("Exec %s: %s", command, err))
+		return false
+	} else {
+		debug(fmt.Sprintf("Exec %s: OK", command))
+		return true
 	}
 }
 
@@ -842,6 +999,14 @@ func serveAPIStats(w http.ResponseWriter, r *http.Request) {
 			o++
 		}
 	}
+	for k := range monitorData.Exec {
+		if monitorData.Exec[k].Status == STATUS_ERROR {
+			e++
+		} else {
+			o++
+		}
+	}
+
 	monitorData.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(StatsData{o, e})
@@ -896,7 +1061,18 @@ func deleteWebItem(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			delete(monitorData.HTTP, f)
+
+		case "exec":
+			for k, v := range getConfig().Monitor.Exec.Targets {
+				if v.Command == f {
+					configLock.Lock()
+					config.Monitor.Exec.Targets = append(config.Monitor.Exec.Targets[:k], config.Monitor.Exec.Targets[k+1:]...)
+					configLock.Unlock()
+				}
+			}
+			delete(monitorData.Exec, f)
 		}
+
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
@@ -980,6 +1156,44 @@ func configWebItem(w http.ResponseWriter, r *http.Request) {
 					}
 					monitorData.Lock()
 					monitorData.HTTP[f].Threshold = int(v)
+					monitorData.Unlock()
+				}
+			}
+
+		case "exec":
+			if len(r.Form["interval"]) > 0 {
+				if v, err := strconv.ParseUint(r.Form["interval"][0], 10, 64); err != nil {
+					log("Unable to parse requested interval: " + r.Form["interval"][0])
+				} else {
+					if v == 0 {
+						v = uint64(getConfig().Monitor.Exec.Interval)
+					}
+					monitorData.Lock()
+					monitorData.Exec[f].Interval = int(v)
+					monitorData.Unlock()
+				}
+			}
+			if len(r.Form["timeout"]) > 0 {
+				if v, err := strconv.ParseUint(r.Form["timeout"][0], 10, 64); err != nil {
+					log("Unable to parse requested timeout: " + r.Form["timeout"][0])
+				} else {
+					if v == 0 {
+						v = uint64(getConfig().Monitor.Exec.Timeout)
+					}
+					monitorData.Lock()
+					monitorData.Exec[f].Timeout = int(v)
+					monitorData.Unlock()
+				}
+			}
+			if len(r.Form["threshold"]) > 0 {
+				if v, err := strconv.ParseUint(r.Form["threshold"][0], 10, 64); err != nil {
+					log("Unable to parse requested threshold: " + r.Form["threshold"][0])
+				} else {
+					if v == 0 {
+						v = uint64(getConfig().Monitor.Exec.Threshold)
+					}
+					monitorData.Lock()
+					monitorData.Exec[f].Threshold = int(v)
 					monitorData.Unlock()
 				}
 			}

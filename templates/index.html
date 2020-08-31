@@ -1,90 +1,150 @@
 <html>
-	<head>
-		<style>
-		body { font-family: Arial } 
+
+<head>
+	<style>
+		body {
+			font-family: Arial
+		}
+
 		.modal {
-    		position: fixed;
-    		top: 0;
-    		left: 0;
-    		bottom: 0;
-    		right: 0;
-    		display: none;
-    		overflow: auto;
-    		background-color: #000000;
-    		background-color: rgba(0, 0, 0, 0.7);
-    		z-index: 9999;
+			position: fixed;
+			top: 0;
+			left: 0;
+			bottom: 0;
+			right: 0;
+			display: none;
+			overflow: auto;
+			background-color: #000000;
+			background-color: rgba(0, 0, 0, 0.7);
+			z-index: 9999;
 		}
 
 		.modal-window {
-    		position: relative;
-    		background-color: #FFFFFF;
-    		width: 50%;
-    		margin: 10% auto;
-    		padding: 20px;
+			position: relative;
+			background-color: #FFFFFF;
+			width: 50%;
+			margin: 10% auto;
+			padding: 20px;
 		}
+
 		.open {
-    		display: block;
+			display: block;
 		}
+
 		table {
 			width: 100%;
 			border-collapse: collapse;
 		}
-		tr, th, td {
+
+		tr,
+		th,
+		td {
 			border: 1px solid grey;
 			padding: 2px;
 			text-align: center
 		}
-		th { background-color: #aaaaaa; padding: 5px }
-		td.name { text-align: left }
-		td.status0, td.status1, td.status2 { width: 5% }
-		td.status0 { background-color: green }
-		td.status1 { background-color: yellow }
-		td.status2 { background-color: red }
-		.relatime { color: grey; font-size: 80% }
-		.datetime { font-weight: bold; font-size: 90% }
-		.footer { font-size: 80% }
-		.log { font-size: 70% }
-		.logts { white-space: nowrap }
-		.delete { float: right }
-		a, a:visited, a:hover, a:active { color: blue; }
-		a:hover { background-color: lightblue}
-		</style>
-		<script>
-			document.addEventListener('click', function (e) {
-		    	e = e || window.event;
-    			var target = e.target || e.srcElement;
 
-    			if (target.hasAttribute('data-toggle') && target.getAttribute('data-toggle') == 'modal') {
-        			if (target.hasAttribute('data-target')) {
-            			var m_ID = target.getAttribute('data-target');
-            			document.getElementById(m_ID).classList.add('open');
-            			e.preventDefault();
-        			}
-    			}
+		th {
+			background-color: #aaaaaa;
+			padding: 5px
+		}
 
- 		   	if ((target.hasAttribute('data-dismiss') && target.getAttribute('data-dismiss') == 'modal') || target.classList.contains('modal')) {
-        			var modal = document.querySelector('[class="modal open"]');
-        			modal.classList.remove('open');
-        			e.preventDefault();
-    			}
-			}, false);
+		td.name {
+			text-align: left
+		}
 
-			function submitDelete(f) {
-				if (confirm("Really delete entry?")) {
-					document.getElementById(f).submit();
+		td.status0,
+		td.status1,
+		td.status2 {
+			width: 5%
+		}
+
+		td.status0 {
+			background-color: green
+		}
+
+		td.status1 {
+			background-color: yellow
+		}
+
+		td.status2 {
+			background-color: red
+		}
+
+		.relatime {
+			color: grey;
+			font-size: 80%
+		}
+
+		.datetime {
+			font-weight: bold;
+			font-size: 90%
+		}
+
+		.footer {
+			font-size: 80%
+		}
+
+		.log {
+			font-size: 70%
+		}
+
+		.logts {
+			white-space: nowrap
+		}
+
+		.delete {
+			float: right
+		}
+
+		a,
+		a:visited,
+		a:hover,
+		a:active {
+			color: blue;
+		}
+
+		a:hover {
+			background-color: lightblue
+		}
+	</style>
+	<script>
+		document.addEventListener('click', function (e) {
+			e = e || window.event;
+			var target = e.target || e.srcElement;
+
+			if (target.hasAttribute('data-toggle') && target.getAttribute('data-toggle') == 'modal') {
+				if (target.hasAttribute('data-target')) {
+					var m_ID = target.getAttribute('data-target');
+					document.getElementById(m_ID).classList.add('open');
+					e.preventDefault();
 				}
 			}
 
-			function submitConfig(f, id, def) {
-				var t = prompt("Enter " + id + " (0 for default):", def);
-				document.getElementById(f)[id].value = t;
+			if ((target.hasAttribute('data-dismiss') && target.getAttribute('data-dismiss') == 'modal') || target.classList.contains('modal')) {
+				var modal = document.querySelector('[class="modal open"]');
+				modal.classList.remove('open');
+				e.preventDefault();
+			}
+		}, false);
+
+		function submitDelete(f) {
+			if (confirm("Really delete entry?")) {
 				document.getElementById(f).submit();
 			}
+		}
 
-		</script>
-	</head>
-	<body>
-		<h1>Janitor</h2>
+		function submitConfig(f, id, def) {
+			var t = prompt("Enter " + id + " (0 for default):", def);
+			document.getElementById(f)[id].value = t;
+			document.getElementById(f).submit();
+		}
+
+	</script>
+</head>
+
+<body>
+	<h1>Janitor</h2>
 		{{ if .MonitorData.MQTT }}
 		<h3>MQTT targets</h3>
 		<table>
@@ -106,12 +166,13 @@
 			<tr>
 				<td class="name">
 					<div>
-					<form id="delete_mqtt_{{ id $topic }}" method="post" action="/delete">
-						<input type="hidden" name="type" value="mqtt">
-						<input type="hidden" name="name" value="{{ $topic }}">
-					</form>
-					{{ $topic }}
-					<span class="delete">(<a href="javascript:submitDelete('delete_mqtt_{{ id $topic }}')">x</a>)</span>
+						<form id="delete_mqtt_{{ id $topic }}" method="post" action="/delete">
+							<input type="hidden" name="type" value="mqtt">
+							<input type="hidden" name="name" value="{{ $topic }}">
+						</form>
+						{{ $topic }}
+						<span class="delete">(<a
+								href="javascript:submitDelete('delete_mqtt_{{ id $topic }}')">x</a>)</span>
 					</div>
 				</td>
 				<td>
@@ -125,24 +186,24 @@
 					<span class="relatime">({{ relaTime $value.LastSeen }} ago)</span>
 				</td>
 				<td> {{ $value.LastPayload }}</td>
-				<td> {{ len $value.History }} 
-					 <a href="#" data-target="modal{{id $topic}}" data-toggle="modal">+</a>
-						<div id="modal{{id $topic}}" class="modal">
-							<div class="modal-window">
-								<table class="log">
-									{{ range $idx, $item := $value.History }}
-									<tr>
-										<td class="logts">
-												{{ $item.Timestamp.Format "2006-01-02 15:04:05"}}
-										</td>
-										<td>
-											<strong>{{ $item.Value }}</strong>
-										</td>
-									</tr>
-									{{ end }}
-								</table>
-							</div>
+				<td> {{ len $value.History }}
+					<a href="#" data-target="modal{{id $topic}}" data-toggle="modal">+</a>
+					<div id="modal{{id $topic}}" class="modal">
+						<div class="modal-window">
+							<table class="log">
+								{{ range $idx, $item := $value.History }}
+								<tr>
+									<td class="logts">
+										{{ $item.Timestamp.Format "2006-01-02 15:04:05"}}
+									</td>
+									<td>
+										<strong>{{ $item.Value }}</strong>
+									</td>
+								</tr>
+								{{ end }}
+							</table>
 						</div>
+					</div>
 					</div>
 				</td>
 				<td> {{ $value.Samples }} </td>
@@ -153,11 +214,12 @@
 						<input type="hidden" name="name" value="{{ $topic }}">
 						<input type="hidden" name="timeout" value=0>
 					</form>
-					<a href="javascript:submitConfig('config_mqtt_{{ id $topic }}', 'timeout', '{{ floatornot $value.Timeout }}')">
+					<a
+						href="javascript:submitConfig('config_mqtt_{{ id $topic }}', 'timeout', '{{ floatornot $value.Timeout }}')">
 						{{ floatornot $value.Timeout }}
 					</a>
 				</td>
-				<td> 
+				<td>
 					{{ if not $value.LastError.IsZero }}
 					<span class="datetime">{{ $value.LastError.Format "2006-01-02 15:04:05" }}</span>
 					<br />
@@ -171,7 +233,7 @@
 			{{ end }}
 		</table>
 		{{ end }}
-		
+
 		{{ if .MonitorData.Ping}}
 		<h3>Ping targets</h3>
 		<table>
@@ -192,20 +254,21 @@
 			<tr>
 				<td class="name">
 					<form id="delete_ping_{{ id $host }}" method="post" action="/delete">
-					<input type="hidden" name="type" value="ping">
-					<input type="hidden" name="name" value="{{ $host }}">
+						<input type="hidden" name="type" value="ping">
+						<input type="hidden" name="name" value="{{ $host }}">
 					</form>
 					{{ $value.Name }}
 					<span class="delete">(<a href="javascript:submitDelete('delete_ping_{{ id $host }}')">x</a>)</span>
 				</td>
 				<td class="name"> {{ $host }} </td>
-				<td> 
+				<td>
 					<form id="config_ping_1_{{ id $host }}" method="post" action="/config">
 						<input type="hidden" name="type" value="ping">
 						<input type="hidden" name="name" value="{{ $host }}">
 						<input type="hidden" name="interval" value=0>
 					</form>
-					<a href="javascript:submitConfig('config_ping_1_{{ id $host }}', 'interval', '{{ $value.Interval }}')">
+					<a
+						href="javascript:submitConfig('config_ping_1_{{ id $host }}', 'interval', '{{ $value.Interval }}')">
 						{{ $value.Interval }}
 					</a>
 				</td>
@@ -215,7 +278,8 @@
 						<input type="hidden" name="name" value="{{ $host }}">
 						<input type="hidden" name="threshold" value=0>
 					</form>
-					<a href="javascript:submitConfig('config_ping_2_{{ id $host }}', 'threshold', '{{ $value.Threshold }}')">
+					<a
+						href="javascript:submitConfig('config_ping_2_{{ id $host }}', 'threshold', '{{ $value.Threshold }}')">
 						{{ $value.Threshold }}
 					</a>
 				</td>
@@ -231,7 +295,7 @@
 					<span class="datetime">{{ $value.LastError.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastError }} ago)</span>
-					 {{ end }}</td>
+					{{ end }}</td>
 				<td> {{ $value.TotalOK }}</td>
 				<td> {{ $value.TotalError }}</td>
 				<td class="status{{ $value.Status }}"></td>
@@ -281,7 +345,8 @@
 						<input type="hidden" name="name" value="{{ $host }}">
 						<input type="hidden" name="interval" value=0>
 					</form>
-					<a href="javascript:submitConfig('config_http_1_{{ id $host }}', 'interval', '{{ $value.Interval }}')">
+					<a
+						href="javascript:submitConfig('config_http_1_{{ id $host }}', 'interval', '{{ $value.Interval }}')">
 						{{ $value.Interval }}
 					</a>
 				</td>
@@ -291,7 +356,8 @@
 						<input type="hidden" name="name" value="{{ $host }}">
 						<input type="hidden" name="timeout" value=0>
 					</form>
-					<a href="javascript:submitConfig('config_http_2_{{ id $host }}', 'timeout', '{{ $value.Timeout }}')">
+					<a
+						href="javascript:submitConfig('config_http_2_{{ id $host }}', 'timeout', '{{ $value.Timeout }}')">
 						{{ $value.Timeout }}
 					</a>
 				</td>
@@ -301,7 +367,8 @@
 						<input type="hidden" name="name" value="{{ $host }}">
 						<input type="hidden" name="threshold" value=0>
 					</form>
-					<a href="javascript:submitConfig('config_http_3_{{ id $host }}', 'threshold', '{{ $value.Threshold }}')">
+					<a
+						href="javascript:submitConfig('config_http_3_{{ id $host }}', 'threshold', '{{ $value.Threshold }}')">
 						{{ $value.Threshold }}
 					</a>
 				</td>
@@ -316,17 +383,103 @@
 					<span class="datetime">{{ $value.LastError.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastError }} ago)</span>
-					 {{ end }}</td>
+					{{ end }}</td>
 				<td> {{ $value.TotalOK }}</td>
 				<td> {{ $value.TotalError }}</td>
-				<td> 					
+				<td>
 					<a href="#" data-target="modal{{ id $host }}" data-toggle="modal">+</a>
 					<div id="modal{{ id $host }}" class="modal">
 						<div class="modal-window">
 							{{ escape $value.LastValue }}
 						</div>
-					</div></td>
+					</div>
+				</td>
 				<td> {{ $value.LastErrorValue }} </td>
+				<td class="status{{ $value.Status }}"></td>
+			</tr>
+
+			{{ end }}
+		</table>
+		{{ end }}
+
+		{{ if .MonitorData.Exec}}
+		<h3>Exec targets</h3>
+		<table>
+			<tr>
+				<th>Name</th>
+				<th>Command</th>
+				<th>Interval</th>
+				<th>Timeout</th>
+				<th>Threshold</th>
+				<th>Last OK</th>
+				<th>Last error</th>
+				<th>Total OK requests</th>
+				<th>Total error requests</th>
+				<th>Status</th>
+			</tr>
+
+			{{ range $command, $value := .MonitorData.Exec }}
+
+			<tr>
+				<td class="name">
+					<form id="delete_exec_{{ id $command }}" method="post" action="/delete">
+						<input type="hidden" name="type" value="exec">
+						<input type="hidden" name="name" value="{{ $command }}">
+					</form>
+					{{ $value.Name }}
+					<span class="delete">(<a
+							href="javascript:submitDelete('delete_exec_{{ id $command }}')">x</a>)</span>
+				</td>
+				<td class="name">
+					{{ $command }}
+				</td>
+				<td>
+					<form id="config_exec_1_{{ id $command }}" method="post" action="/config">
+						<input type="hidden" name="type" value="exec">
+						<input type="hidden" name="name" value="{{ $command }}">
+						<input type="hidden" name="interval" value=0>
+					</form>
+					<a
+						href="javascript:submitConfig('config_exec_1_{{ id $command }}', 'interval', '{{ $value.Interval }}')">
+						{{ $value.Interval }}
+					</a>
+				</td>
+				<td>
+					<form id="config_exec_2_{{ id $command }}" method="post" action="/config">
+						<input type="hidden" name="type" value="exec">
+						<input type="hidden" name="name" value="{{ $command }}">
+						<input type="hidden" name="timeout" value=0>
+					</form>
+					<a
+						href="javascript:submitConfig('config_exec_2_{{ id $command }}', 'timeout', '{{ $value.Timeout }}')">
+						{{ $value.Timeout }}
+					</a>
+				</td>
+				<td>
+					<form id="config_exec_3_{{ id $command }}" method="post" action="/config">
+						<input type="hidden" name="type" value="exec">
+						<input type="hidden" name="name" value="{{ $command }}">
+						<input type="hidden" name="threshold" value=0>
+					</form>
+					<a
+						href="javascript:submitConfig('config_exec_3_{{ id $command }}', 'threshold', '{{ $value.Threshold }}')">
+						{{ $value.Threshold }}
+					</a>
+				</td>
+				<td>
+					{{ if not $value.LastOK.IsZero }}
+					<span class="datetime">{{ $value.LastOK.Format "2006-01-02 15:04:05" }}</span>
+					<br />
+					<span class="relatime">({{ relaTime $value.LastOK }} ago)</span>
+					{{ end }}</td>
+				<td>
+					{{ if not $value.LastError.IsZero }}
+					<span class="datetime">{{ $value.LastError.Format "2006-01-02 15:04:05" }}</span>
+					<br />
+					<span class="relatime">({{ relaTime $value.LastError }} ago)</span>
+					{{ end }}</td>
+				<td> {{ $value.TotalOK }}</td>
+				<td> {{ $value.TotalError }}</td>
 				<td class="status{{ $value.Status }}"></td>
 			</tr>
 
@@ -345,25 +498,26 @@
 			<a href="/reload_config">Reload config</a>
 			<a href="javascript:window.location.reload()">Refresh</a>
 
-			<div id="modal_config" class="modal">
-				<div class="modal-window">
-					<pre>{{ json .Config }}</pre>
-				</div>
+		<div id="modal_config" class="modal">
+			<div class="modal-window">
+				<pre>{{ json .Config }}</pre>
 			</div>
+		</div>
 
-			<div id="modal_log" class="modal">
-				<div class="modal-window">
-					<table class="log">
-						{{ range $e := .LogHistory }}
-						<tr>
-							<td class="logts">{{ $e.Timestamp.Format "2006-01-02 15:04:05" }}</td>
-							<td>{{ $e.Value }}</td>
-						</tr>
-						{{ end }}
-					</table>
-				</div>
+		<div id="modal_log" class="modal">
+			<div class="modal-window">
+				<table class="log">
+					{{ range $e := .LogHistory }}
+					<tr>
+						<td class="logts">{{ $e.Timestamp.Format "2006-01-02 15:04:05" }}</td>
+						<td>{{ $e.Value }}</td>
+					</tr>
+					{{ end }}
+				</table>
 			</div>
+		</div>
 
 		</p>
-	</body>
+</body>
+
 </html>
