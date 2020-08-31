@@ -820,10 +820,12 @@ func serveAPIStats(w http.ResponseWriter, r *http.Request) {
 	e := 0
 	monitorData.RLock()
 	for k := range monitorData.MQTT {
-		if monitorData.MQTT[k].Status == STATUS_ERROR {
-			e++
-		} else {
-			o++
+		if !monitorData.MQTT[k].Deleted {
+			if monitorData.MQTT[k].Status == STATUS_ERROR {
+				e++
+			} else {
+				o++
+			}
 		}
 	}
 	for k := range monitorData.Ping {
