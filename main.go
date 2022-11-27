@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -20,7 +21,6 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api"
-	"github.com/gobuffalo/packr"
 	"gopkg.in/yaml.v2"
 )
 
@@ -222,6 +222,9 @@ var (
 
 	monitorMqttClient mqtt.Client
 	alertMqttClient   mqtt.Client
+
+	//go:embed templates/index.html
+	index_template string
 )
 
 const (
@@ -926,12 +929,6 @@ func getConfig() *Config {
 func serveIndex(w http.ResponseWriter, r *http.Request) {
 	debug("Web request " + r.RequestURI + " from " + r.RemoteAddr)
 
-	box := packr.NewBox("./templates")
-	s, err := box.FindString("index.html")
-	if err != nil {
-		panic(err)
-	}
-
 	tmpl, err := template.New("w").Funcs(template.FuncMap{
 		"relaTime": relaTime,
 		"escape":   template.HTMLEscaper,
@@ -950,7 +947,7 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 			h := fnv.New64a()
 			h.Write([]byte(s))
 			return h.Sum64()
-		}}).Parse(s)
+		}}).Parse(index_template)
 	if err != nil {
 		panic(err)
 	}

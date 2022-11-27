@@ -29,19 +29,11 @@ Finally, Janitor includes a simple JSON api with the following endpoints:
 
 Janitor is written in Go and will compile to a single standalone binary. Janitor should compile and work both on Linux and on Windows.
 
-For compiling, first install the necessary prerequisites and [packr](https://github.com/gobuffalo/packr) for embedding the HTML template in the binary:
-
-    $ go get github.com/eclipse/paho.mqtt.golang
-    $ go get github.com/go-telegram-bot-api/telegram-bot-api
-    $ go get gopkg.in/yaml.v2
-    $ go get github.com/gobuffalo/packr/packr
-    $ go get github.com/gobuffalo/packr
-
-Then use the following commands to clone the repository and build the binary:
+For compiling, use at least Go version 1.16 and execute the following commands to clone the repository and build the binary:
 
     $ git clone https://github.com/a-bali/janitor.git
     $ cd janitor
-    $ packr build
+    $ go build
 
 This will create the standalone binary named `janitor` that you can place anywhere you like.
 
