@@ -670,24 +670,36 @@ func evaluateMQTT() {
 	}
 }
 
-// Matches and MQTT topic 'subject' to a topic pattern 'pattern', potentially containing wildcard ('#').
+// Matches and MQTT topic 'subject' to a topic pattern 'pattern', potentially containing wildcard ('#' / '+').
+// Based on https://github.com/RangerMauve/mqtt-pattern
 // Returns true if matches, false if not.
 func matchMQTTTopic(pattern string, subject string) bool {
 	sl := strings.Split(subject, "/")
 	pl := strings.Split(pattern, "/")
 
-	for i, _ := range sl {
-		if len(pl)-1 < i {
+	slen := len(sl)
+	plen := len(pl)
+	lasti := plen - 1
+
+	for i := range pl {
+
+		if len(pl[i]) == 0 && len(sl[i]) == 0 {
+			continue
+		}
+		if len(pl[i]) == 0 {
+			continue
+		}
+		if len(sl[i]) == 0 && pl[i][0] != '#' {
 			return false
 		}
-		if pl[i] == "#" {
-			return true
+		if pl[i][0] == '#' {
+			return i == lasti
 		}
-		if pl[i] != sl[i] {
+		if pl[i][0] != '+' && pl[i] != sl[i] {
 			return false
 		}
 	}
-	return true
+	return plen == slen
 }
 
 // Periodically iterate through ping targets and perform check if required.
