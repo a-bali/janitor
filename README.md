@@ -63,7 +63,7 @@ Janitor will not daemonize itself. It is recommended to create a systemd service
 
 ## Running with Docker
 
-Docker Hub automatically builds an image from the latest version of Janitor that can be pulled as [`abali/janitor`](https://hub.docker.com/repository/docker/abali/janitor). To use this, map your configuration file to `/janitor/config.yml`:
+The latest version of Janitor is available on Docker Hub [`abali/janitor`](https://hub.docker.com/repository/docker/abali/janitor). To use this, map your configuration file to `/janitor/config.yml`:
 
     $ docker run -v $(pwd)/config.yml:/janitor/config.yml -p 8080:8080 abali/janitor
 
