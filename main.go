@@ -53,6 +53,7 @@ type Config struct {
 	Monitor struct {
 		MQTT struct {
 			Server          string
+			Scheme		string
 			Port            int
 			User            string
 			Password        string
@@ -470,7 +471,7 @@ func loadConfig() {
 			debug("Disconnected from MQTT (monitoring)")
 		}
 		opts := mqtt.NewClientOptions()
-		opts.AddBroker(fmt.Sprintf("%s://%s:%d", "tcp", getConfig().Monitor.MQTT.Server, getConfig().Monitor.MQTT.Port))
+		opts.AddBroker(fmt.Sprintf("%s://%s:%d", "tcp", getConfig().Monitor.MQTT.Scheme, getConfig().Monitor.MQTT.Server, getConfig().Monitor.MQTT.Port))
 		opts.SetUsername(getConfig().Monitor.MQTT.User)
 		opts.SetPassword(getConfig().Monitor.MQTT.Password)
 		opts.OnConnect = func(c mqtt.Client) {
