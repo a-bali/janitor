@@ -27,6 +27,8 @@ monitor:
     # Server connection details
     # Host name
     server: openwrt.lan
+    # Scheme (mqtt or mqtts)
+    scheme: mqtt
     # Port number (default: 1883)
     port: 1883
     # User and password if required
