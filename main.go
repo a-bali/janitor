@@ -469,56 +469,13 @@ func loadConfig() {
 			monitorMqttClient.Disconnect(1)
 			debug("Disconnected from MQTT (monitoring)")
 		}
-		opts := mqtt.NewClientOptions()
-		opts.AddBroker(fmt.Sprintf("%s:%d", getConfig().Monitor.MQTT.Server, getConfig().Monitor.MQTT.Port))
-		opts.SetUsername(getConfig().Monitor.MQTT.User)
-		opts.SetPassword(getConfig().Monitor.MQTT.Password)
-		opts.OnConnect = func(c mqtt.Client) {
 
-			topics := make(map[string]byte)
-			for _, t := range getConfig().Monitor.MQTT.Targets {
-				topics[t.Topic] = byte(0)
-			}
-
-			// deduplicate MQTT topics (remove specific topics that are included in wildcard topics)
-			for t, _ := range topics {
-				if strings.Contains(t, "#") {
-					for tt, _ := range topics {
-						if matchMQTTTopic(t, tt) && t != tt {
-							delete(topics, tt)
-							debug(fmt.Sprintf("Deleting %s from MQTT subscription (included in %s)", tt, t))
-						}
-					}
-				}
-			}
-
-			t := make([]string, 0)
-			for i, _ := range topics {
-				t = append(t, i)
-			}
-
-			if token := c.SubscribeMultiple(topics, onMessageReceived); token.Wait() && token.Error() != nil {
-				log("Unable to subscribe to MQTT: " + token.Error().Error())
-			} else {
-				log("Subscribed to MQTT topics: " + strings.Join(t, ", "))
-			}
-		}
-
-		monitorMqttClient = mqtt.NewClient(opts)
-		if token := monitorMqttClient.Connect(); token.Wait() && token.Error() != nil {
-			log("Unable to connect to MQTT for monitoring: " + token.Error().Error())
-		} else {
-			log("Connected to MQTT server for monitoring at " + opts.Servers[0].String())
-		}
+		connectMqtt()
 	}
 
 	// connect Telegram if configured
 	if getConfig().Alert.Telegram.Token != "" && getConfig().Alert.Telegram.Chat != 0 {
-		tgbot, err = tgbotapi.NewBotAPI(getConfig().Alert.Telegram.Token)
-		if err != nil {
-			log("Unable to connect to Telegram: " + err.Error())
-		}
-		log("Connected to telegram bot")
+		connectTelegram()
 	}
 
 	// connect MQTT alert topic if configured
@@ -527,17 +484,74 @@ func loadConfig() {
 			alertMqttClient.Disconnect(1)
 			debug("Disconnected from MQTT (alerting)")
 		}
-		opts := mqtt.NewClientOptions()
-		opts.AddBroker(fmt.Sprintf("%s:%d", getConfig().Alert.MQTT.Server, getConfig().Alert.MQTT.Port))
-		opts.SetUsername(getConfig().Monitor.MQTT.User)
-		opts.SetPassword(getConfig().Monitor.MQTT.Password)
-		alertMqttClient = mqtt.NewClient(opts)
-		if token := alertMqttClient.Connect(); token.Wait() && token.Error() != nil {
-			log("Unable to connect to MQTT for alerting: " + token.Error().Error())
-		} else {
-			log("Connected to MQTT server for alerting at " + opts.Servers[0].String())
+		connectMqttAlert()
+
+	}
+}
+
+func connectTelegram() {
+	bot, err := tgbotapi.NewBotAPI(getConfig().Alert.Telegram.Token)
+	if err != nil {
+		log("Unable to connect to Telegram: " + err.Error())
+		tgbot = bot
+	}
+	log("Connected to telegram bot")
+}
+
+func connectMqtt() {
+	opts := mqtt.NewClientOptions()
+	opts.AddBroker(fmt.Sprintf("%s:%d", getConfig().Monitor.MQTT.Server, getConfig().Monitor.MQTT.Port))
+	opts.SetUsername(getConfig().Monitor.MQTT.User)
+	opts.SetPassword(getConfig().Monitor.MQTT.Password)
+	opts.OnConnect = func(c mqtt.Client) {
+
+		topics := make(map[string]byte)
+		for _, t := range getConfig().Monitor.MQTT.Targets {
+			topics[t.Topic] = byte(0)
 		}
 
+		// deduplicate MQTT topics (remove specific topics that are included in wildcard topics)
+		for t := range topics {
+			if strings.Contains(t, "#") {
+				for tt := range topics {
+					if matchMQTTTopic(t, tt) && t != tt {
+						delete(topics, tt)
+						debug(fmt.Sprintf("Deleting %s from MQTT subscription (included in %s)", tt, t))
+					}
+				}
+			}
+		}
+
+		t := make([]string, 0)
+		for i := range topics {
+			t = append(t, i)
+		}
+
+		if token := c.SubscribeMultiple(topics, onMessageReceived); token.Wait() && token.Error() != nil {
+			log("Unable to subscribe to MQTT: " + token.Error().Error())
+		} else {
+			log("Subscribed to MQTT topics: " + strings.Join(t, ", "))
+		}
+	}
+
+	monitorMqttClient = mqtt.NewClient(opts)
+	if token := monitorMqttClient.Connect(); token.Wait() && token.Error() != nil {
+		log("Unable to connect to MQTT for monitoring: " + token.Error().Error())
+	} else {
+		log("Connected to MQTT server for monitoring at " + opts.Servers[0].String())
+	}
+}
+
+func connectMqttAlert() {
+	opts := mqtt.NewClientOptions()
+	opts.AddBroker(fmt.Sprintf("%s:%d", getConfig().Alert.MQTT.Server, getConfig().Alert.MQTT.Port))
+	opts.SetUsername(getConfig().Monitor.MQTT.User)
+	opts.SetPassword(getConfig().Monitor.MQTT.Password)
+	alertMqttClient = mqtt.NewClient(opts)
+	if token := alertMqttClient.Connect(); token.Wait() && token.Error() != nil {
+		log("Unable to connect to MQTT for alerting: " + token.Error().Error())
+	} else {
+		log("Connected to MQTT server for alerting at " + opts.Servers[0].String())
 	}
 }
 
@@ -577,8 +591,6 @@ func onMessageReceived(client mqtt.Client, message mqtt.Message) {
 	e.LastPayload = string(message.Payload())
 	e.Samples++
 
-	//monitorData.MQTT[message.Topic()] = e
-
 }
 
 // Launch infinite loops for monitoring and alerting.
@@ -617,6 +629,13 @@ func monitoringLoop() {
 // Periodically evaluate MQTT monitoring targets and issue alerts/recoveries as needed.
 func evaluateMQTT() {
 
+	// Attempt MQTT connection if configured but not connected
+	if getConfig().Monitor.MQTT.Server != "" {
+		if monitorMqttClient == nil || !monitorMqttClient.IsConnected() {
+			connectMqtt()
+		}
+	}
+
 	monitorData.Lock()
 	defer monitorData.Unlock()
 
@@ -626,7 +645,7 @@ func evaluateMQTT() {
 			continue
 		}
 
-		elapsed := time.Now().Sub(v.LastSeen).Seconds()
+		elapsed := time.Since(v.LastSeen).Seconds()
 
 		var timeout float64
 		// use overridden timeout if specified
@@ -1230,9 +1249,14 @@ func alert(sensorType string, sensorName string, status int, since time.Time, ms
 
 	log(s)
 
-	if getConfig().Alert.Telegram.Token != "" && getConfig().Alert.Telegram.Chat != 0 && tgbot != nil {
-		if _, err := tgbot.Send(tgbotapi.NewMessage(getConfig().Alert.Telegram.Chat, s)); err != nil {
-			log("Error sending to telegram: " + err.Error())
+	if getConfig().Alert.Telegram.Token != "" && getConfig().Alert.Telegram.Chat != 0 {
+		if tgbot == nil {
+			connectTelegram()
+		}
+		if tgbot != nil {
+			if _, err := tgbot.Send(tgbotapi.NewMessage(getConfig().Alert.Telegram.Chat, s)); err != nil {
+				log("Error sending to telegram: " + err.Error())
+			}
 		}
 	}
 	if getConfig().Alert.Gotify.Token != "" && getConfig().Alert.Gotify.Server != "" {
@@ -1253,20 +1277,25 @@ func alert(sensorType string, sensorName string, status int, since time.Time, ms
 	}
 
 	// construct and post json payload for MQTT target
-	if getConfig().Alert.MQTT.Server != "" && getConfig().Alert.MQTT.Topic != "" && alertMqttClient != nil {
-		payload := MQTTAlertPayload{sensorType, sensorName, "", since, msg, s}
-		switch status {
-		case STATUS_OK:
-			payload.Status = "OK"
-		case STATUS_ERROR:
-			payload.Status = "ERROR"
+	if getConfig().Alert.MQTT.Server != "" && getConfig().Alert.MQTT.Topic != "" {
+		if alertMqttClient == nil || !alertMqttClient.IsConnected() {
+			connectMqttAlert()
 		}
-		b, err := json.Marshal(payload)
-		if err != nil {
-			log("Unable to compile payload for MQTT alert: " + err.Error())
-			return
+		if alertMqttClient != nil {
+			payload := MQTTAlertPayload{sensorType, sensorName, "", since, msg, s}
+			switch status {
+			case STATUS_OK:
+				payload.Status = "OK"
+			case STATUS_ERROR:
+				payload.Status = "ERROR"
+			}
+			b, err := json.Marshal(payload)
+			if err != nil {
+				log("Unable to compile payload for MQTT alert: " + err.Error())
+				return
+			}
+			alertMqttClient.Publish(getConfig().Alert.MQTT.Topic, 0, false, b)
 		}
-		alertMqttClient.Publish(getConfig().Alert.MQTT.Topic, 0, false, b)
 	}
 }
 

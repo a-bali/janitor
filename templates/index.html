@@ -41,7 +41,8 @@
 		td {
 			border: 1px solid grey;
 			padding: 2px;
-			text-align: center
+			text-align: center;
+			word-break: break-all
 		}
 
 		th {
@@ -289,13 +290,15 @@
 					<span class="datetime">{{ $value.LastOK.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastOK }} ago)</span>
-					{{ end }}</td>
+					{{ end }}
+				</td>
 				<td>
 					{{ if not $value.LastError.IsZero }}
 					<span class="datetime">{{ $value.LastError.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastError }} ago)</span>
-					{{ end }}</td>
+					{{ end }}
+				</td>
 				<td> {{ $value.TotalOK }}</td>
 				<td> {{ $value.TotalError }}</td>
 				<td class="status{{ $value.Status }}"></td>
@@ -377,13 +380,15 @@
 					<span class="datetime">{{ $value.LastOK.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastOK }} ago)</span>
-					{{ end }}</td>
+					{{ end }}
+				</td>
 				<td>
 					{{ if not $value.LastError.IsZero }}
 					<span class="datetime">{{ $value.LastError.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastError }} ago)</span>
-					{{ end }}</td>
+					{{ end }}
+				</td>
 				<td> {{ $value.TotalOK }}</td>
 				<td> {{ $value.TotalError }}</td>
 				<td>
@@ -471,13 +476,15 @@
 					<span class="datetime">{{ $value.LastOK.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastOK }} ago)</span>
-					{{ end }}</td>
+					{{ end }}
+				</td>
 				<td>
 					{{ if not $value.LastError.IsZero }}
 					<span class="datetime">{{ $value.LastError.Format "2006-01-02 15:04:05" }}</span>
 					<br />
 					<span class="relatime">({{ relaTime $value.LastError }} ago)</span>
-					{{ end }}</td>
+					{{ end }}
+				</td>
 				<td> {{ $value.TotalOK }}</td>
 				<td> {{ $value.TotalError }}</td>
 				<td class="status{{ $value.Status }}"></td>
