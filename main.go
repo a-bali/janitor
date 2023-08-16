@@ -470,7 +470,7 @@ func loadConfig() {
 			debug("Disconnected from MQTT (monitoring)")
 		}
 		opts := mqtt.NewClientOptions()
-		opts.AddBroker(fmt.Sprintf("%s://%s:%d", "tcp", getConfig().Monitor.MQTT.Server, getConfig().Monitor.MQTT.Port))
+		opts.AddBroker(fmt.Sprintf("%s:%d", getConfig().Monitor.MQTT.Server, getConfig().Monitor.MQTT.Port))
 		opts.SetUsername(getConfig().Monitor.MQTT.User)
 		opts.SetPassword(getConfig().Monitor.MQTT.Password)
 		opts.OnConnect = func(c mqtt.Client) {
@@ -528,7 +528,7 @@ func loadConfig() {
 			debug("Disconnected from MQTT (alerting)")
 		}
 		opts := mqtt.NewClientOptions()
-		opts.AddBroker(fmt.Sprintf("%s://%s:%d", "tcp", getConfig().Alert.MQTT.Server, getConfig().Alert.MQTT.Port))
+		opts.AddBroker(fmt.Sprintf("%s:%d", getConfig().Alert.MQTT.Server, getConfig().Alert.MQTT.Port))
 		opts.SetUsername(getConfig().Monitor.MQTT.User)
 		opts.SetPassword(getConfig().Monitor.MQTT.Password)
 		alertMqttClient = mqtt.NewClient(opts)
