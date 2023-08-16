@@ -1,0 +1,35 @@
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  releases-matrix:
+    name: Release Go Binary
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, windows, darwin]
+        goarch: [amd64, arm, arm64]
+        exclude:
+          - goarch: arm64
+            goos: windows
+          - goarch: arm
+            goos: windows
+          - goarch: arm
+            goos: darwin
+    steps:
+      - uses: actions/checkout@v3
+      - run: echo "TAG=$(basename $GITHUB_REF)" >> $GITHUB_ENV
+      - uses: wangyoucao577/go-release-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          goarm: 5
+          build_command: make
+          extra_files: LICENSE README.md config.yml
+          asset_name: janitor-${{ env.TAG }}-${{ matrix.goos }}-${{ matrix.goarch }}

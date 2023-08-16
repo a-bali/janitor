@@ -1,16 +1,13 @@
 FROM golang:latest as builder
 
-WORKDIR /app
-COPY main.go ./
-COPY go.mod ./
-COPY go.sum ./
-COPY templates ./templates
+COPY . /build/janitor
+WORKDIR /build/janitor
 
-RUN CGO_ENABLED=0 GOOS=linux go build
+RUN make static_build
 
 FROM alpine:latest
 RUN apk --no-cache add tzdata
 WORKDIR /janitor
-COPY --from=builder /app/janitor ./
+COPY --from=builder /build/janitor/janitor ./
 EXPOSE 8080
 ENTRYPOINT ["/janitor/janitor", "/janitor/config.yml"]

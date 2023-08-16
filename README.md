@@ -35,7 +35,8 @@ For compiling, use at least Go version 1.16 and execute the following commands t
     $ cd janitor
     $ go build
 
-This will create the standalone binary named `janitor` that you can place anywhere you like.
+This will create the standalone binary named `janitor` that you can place anywhere you like. Pre-built binaries for releases
+are available on Github.
 
 ## Configuration and usage
 

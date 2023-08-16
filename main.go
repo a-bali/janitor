@@ -184,6 +184,7 @@ type PageData struct {
 	Uptime      time.Time
 	Config      *Config
 	LogHistory  *[]TimedEntry
+	Fullversion *string
 }
 
 // Data struct of JSON payload for MQTT alerts.
@@ -203,6 +204,11 @@ type StatsData struct {
 }
 
 var (
+	version     string
+	build       string
+	commit      string
+	fullversion string
+
 	config     *Config
 	configFile string
 	configLock = new(sync.RWMutex)
@@ -237,8 +243,10 @@ const (
 )
 
 func main() {
+	fullversion = fmt.Sprintf("Janitor %s (build date %s, %s)", version, build, commit)
 	// load initial config
 	if len(os.Args) != 2 {
+		fmt.Println(fullversion)
 		fmt.Println("Usage: " + os.Args[0] + " <configfile>")
 		os.Exit(1)
 	}
@@ -311,6 +319,8 @@ func loadConfig() {
 		config = new(Config)
 		setDefaults(config)
 	}
+
+	log("Starting " + fullversion)
 
 	// (re)populate config struct from file
 	yamlFile, err := ioutil.ReadFile(configFile)
@@ -992,7 +1002,8 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 			time.Now(),
 			uptime,
 			getConfig(),
-			&logHistory})
+			&logHistory,
+			&fullversion})
 
 	monitorData.RUnlock()
 	logLock.RUnlock()
