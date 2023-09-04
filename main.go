@@ -500,10 +500,10 @@ func loadConfig() {
 }
 
 func connectTelegram() {
-	bot, err := tgbotapi.NewBotAPI(getConfig().Alert.Telegram.Token)
+	var err error
+	tgbot, err = tgbotapi.NewBotAPI(getConfig().Alert.Telegram.Token)
 	if err != nil {
 		log("Unable to connect to Telegram: " + err.Error())
-		tgbot = bot
 	}
 	log("Connected to telegram bot")
 }
