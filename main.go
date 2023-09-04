@@ -60,6 +60,7 @@ type Config struct {
 			StandardTimeout float64
 			Targets         []struct {
 				Topic   string
+				Name    string
 				Timeout int
 			}
 		}
@@ -110,6 +111,7 @@ type TimedEntry struct {
 
 // MQTTTopic stores status information on a MQTT topic.
 type MQTTMonitorData struct {
+	Name          string
 	FirstSeen     time.Time
 	LastSeen      time.Time
 	LastError     time.Time
@@ -565,6 +567,16 @@ func connectMqttAlert() {
 	}
 }
 
+// finds a custom name in the configuration for a given topic
+func findTopicName(topic string) string {
+	for _, t := range getConfig().Monitor.MQTT.Targets {
+		if t.Topic == topic && t.Name != "" {
+			return t.Name
+		}
+	}
+	return topic
+}
+
 // Receives an MQTT message and updates status accordingly.
 func onMessageReceived(client mqtt.Client, message mqtt.Message) {
 	debug("MQTT: " + message.Topic() + ": " + string(message.Payload()))
@@ -576,6 +588,7 @@ func onMessageReceived(client mqtt.Client, message mqtt.Message) {
 	if !ok {
 		monitorData.MQTT[message.Topic()] = &MQTTMonitorData{}
 		e = monitorData.MQTT[message.Topic()]
+		e.Name = findTopicName(message.Topic())
 	}
 
 	if e.Deleted {
@@ -682,7 +695,7 @@ func evaluateMQTT() {
 
 		if elapsed > timeout {
 			if v.Status != STATUS_ERROR {
-				alert("MQTT", topic, STATUS_ERROR, v.LastSeen, fmt.Sprintf("timeout %.2fs", timeout))
+				alert("MQTT", v.Name, STATUS_ERROR, v.LastSeen, fmt.Sprintf("timeout %.2fs", timeout))
 				v.LastError = time.Now()
 				v.Alerts++
 			}
@@ -691,7 +704,7 @@ func evaluateMQTT() {
 			v.Status = STATUS_WARN
 		} else {
 			if v.Status == STATUS_ERROR {
-				alert("MQTT", topic, STATUS_OK, v.LastError, "")
+				alert("MQTT", v.Name, STATUS_OK, v.LastError, "")
 			}
 			v.Status = STATUS_OK
 		}

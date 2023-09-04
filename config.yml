@@ -42,6 +42,8 @@ monitor:
       - topic: "/sensors/aqara_inside/#"
         # Custom timeout threshold (fixed value in seconds) to be used for the topic (default: standardtimeout as defined above)
         timeout: 3600
+        # Custom name to show instead of MQTT topic (note: does not work with wildcard topic names, only exact matches)
+        name: "Inside temperature"
       - topic: "/sensors/aqara_outside/#"
         timeout: 3600
       - topic: "/sensors/#"

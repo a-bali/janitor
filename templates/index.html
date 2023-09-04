@@ -171,7 +171,7 @@
 							<input type="hidden" name="type" value="mqtt">
 							<input type="hidden" name="name" value="{{ $topic }}">
 						</form>
-						{{ $topic }}
+						<span title="{{ $topic }}"> {{ $value.Name }} </span>
 						<span class="delete">(<a
 								href="javascript:submitDelete('delete_mqtt_{{ id $topic }}')">x</a>)</span>
 					</div>
