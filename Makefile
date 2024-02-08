@@ -5,16 +5,16 @@ BUILD   := $(shell date '+%FT%T%z')
 COMMIT  := $(shell git describe --always --long)
 
 build:
-	go build -ldflags="-X main.version=$(VERSION) -X main.build=$(BUILD) -X main.commit=$(COMMIT)"
+	@go build -ldflags="-X main.version=$(VERSION) -X main.build=$(BUILD) -X main.commit=$(COMMIT)"
 
 static_build:
-	CGO_ENABLED=0 go build -ldflags="-X main.version=$(VERSION) -X main.build=$(BUILD) -X main.commit=$(COMMIT)"
+	@CGO_ENABLED=0 go build -ldflags="-X main.version=$(VERSION) -X main.build=$(BUILD) -X main.commit=$(COMMIT)"
 
 .PHONY: docker
 docker:
 	docker build . -t $(IMAGE)
 
-.PHONY: publish 
+.PHONY: publish
 publish:
 	@docker buildx create --use --name=crossplat --node=crossplat && \
 	docker buildx build \

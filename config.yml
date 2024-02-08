@@ -9,6 +9,9 @@ debug: true
 # Maximum size of log history to maintain (default: 1000)
 logsize: 1000
 
+# hostname (default: obtained from OS or "janitor"), used for Prometheus metrics
+hostname: "janitor"
+
 # Configuration of built in web server:
 # - Host name (default: '' meaning all interfaces will be bound)
 # - Port number (default: 8080)

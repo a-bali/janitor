@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"io/ioutil"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -26,9 +26,10 @@ import (
 
 // Config stores the variables for runtime configuration.
 type Config struct {
-	Debug   bool
-	LogSize int
-	Web     struct {
+	Debug    bool
+	LogSize  int
+	HostName string
+	Web      struct {
 		Host string
 		Port int
 	}
@@ -172,11 +173,11 @@ type ExecMonitorData struct {
 
 // MonitorData stores the actual status data of the monitoring process.
 type MonitorData struct {
-	MQTT map[string]*MQTTMonitorData
-	Ping map[string]*PingMonitorData
-	HTTP map[string]*HTTPMonitorData
-	Exec map[string]*ExecMonitorData
-	sync.RWMutex
+	MQTT         map[string]*MQTTMonitorData
+	Ping         map[string]*PingMonitorData
+	HTTP         map[string]*HTTPMonitorData
+	Exec         map[string]*ExecMonitorData
+	sync.RWMutex `json:"-"`
 }
 
 // Data struct for serving main web page.
@@ -238,6 +239,8 @@ var (
 const (
 	// MAXLOGSIZE defines the maximum lenght of the log history maintained (can be overridden in config)
 	MAXLOGSIZE = 1000
+	// Default hostname
+	HOSTNAME = "janitor"
 	// Status flags for monitoring.
 	STATUS_OK    = 0
 	STATUS_WARN  = 1
@@ -264,11 +267,19 @@ func main() {
 	http.HandleFunc("/config", configWebItem)
 	http.HandleFunc("/api/stats", serveAPIStats)
 	http.HandleFunc("/api/data", serveAPIData)
+	http.HandleFunc("/api/metrics", serveAPIMetrics)
 	panic(http.ListenAndServe(fmt.Sprintf("%s:%d", getConfig().Web.Host, getConfig().Web.Port), nil))
 }
 
 // Set defaults for configuration values.
 func setDefaults(c *Config) {
+	if c.HostName == "" {
+		hostname, err := os.Hostname()
+		if err != nil {
+			hostname = HOSTNAME
+		}
+		c.HostName = hostname
+	}
 	if c.LogSize == 0 {
 		c.LogSize = MAXLOGSIZE
 	}
@@ -325,7 +336,7 @@ func loadConfig() {
 	log("Starting " + fullversion)
 
 	// (re)populate config struct from file
-	yamlFile, err := ioutil.ReadFile(configFile)
+	yamlFile, err := os.ReadFile(configFile)
 	if err != nil {
 		log("Unable to load config: " + err.Error())
 		return
@@ -921,7 +932,7 @@ func performHTTPCheck(url string, pattern string, timeout int) (bool, string, st
 		errValue = fmt.Sprintf("status code %d", resp.StatusCode)
 	} else {
 		defer resp.Body.Close()
-		bodyBytes, bodyErr := ioutil.ReadAll(resp.Body)
+		bodyBytes, bodyErr := io.ReadAll(resp.Body)
 		if bodyErr != nil {
 			errValue = bodyErr.Error()
 		} else {
@@ -1022,46 +1033,84 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 	logLock.RUnlock()
 }
 
+// Counts targets per type and status
+func calcStats() (map[string]int, map[string]int) {
+	up := make(map[string]int)
+	down := make(map[string]int)
+
+	monitorData.RLock()
+
+	up["mqtt"] = 0
+	down["mqtt"] = 0
+	for k := range monitorData.MQTT {
+		if !monitorData.MQTT[k].Deleted {
+			if monitorData.MQTT[k].Status == STATUS_ERROR {
+				down["mqtt"]++
+			} else {
+				up["mqtt"]++
+			}
+		}
+	}
+	up["ping"] = 0
+	down["ping"] = 0
+	for k := range monitorData.Ping {
+		if monitorData.Ping[k].Status == STATUS_ERROR {
+			down["ping"]++
+		} else {
+			up["ping"]++
+		}
+	}
+	up["http"] = 0
+	down["http"] = 0
+	for k := range monitorData.HTTP {
+		if monitorData.HTTP[k].Status == STATUS_ERROR {
+			down["http"]++
+		} else {
+			up["http"]++
+		}
+	}
+	up["exec"] = 0
+	down["exec"] = 0
+	for k := range monitorData.Exec {
+		if monitorData.Exec[k].Status == STATUS_ERROR {
+			down["exec"]++
+		} else {
+			up["exec"]++
+		}
+	}
+
+	monitorData.RUnlock()
+	return up, down
+
+}
+
 // Serves the api/stats page.
 func serveAPIStats(w http.ResponseWriter, r *http.Request) {
 	debug("Web request " + r.RequestURI + " from " + r.RemoteAddr)
 	o := 0
 	e := 0
-	monitorData.RLock()
-	for k := range monitorData.MQTT {
-		if !monitorData.MQTT[k].Deleted {
-			if monitorData.MQTT[k].Status == STATUS_ERROR {
-				e++
-			} else {
-				o++
-			}
-		}
+	up, down := calcStats()
+	for k, c := range up {
+		o += c
+		e += down[k]
 	}
-	for k := range monitorData.Ping {
-		if monitorData.Ping[k].Status == STATUS_ERROR {
-			e++
-		} else {
-			o++
-		}
-	}
-	for k := range monitorData.HTTP {
-		if monitorData.HTTP[k].Status == STATUS_ERROR {
-			e++
-		} else {
-			o++
-		}
-	}
-	for k := range monitorData.Exec {
-		if monitorData.Exec[k].Status == STATUS_ERROR {
-			e++
-		} else {
-			o++
-		}
-	}
-
-	monitorData.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(StatsData{o, e})
+}
+
+// Serves the api/metrics page.
+func serveAPIMetrics(w http.ResponseWriter, r *http.Request) {
+	debug("Web request " + r.RequestURI + " from " + r.RemoteAddr)
+	w.Header().Set("Content-Type", "text/plain")
+	fmt.Fprintln(w, "HELP janitor_targets Number of Janitor targets")
+	fmt.Fprintln(w, "TYPE janitor_targets gauge")
+	up, down := calcStats()
+	for t, c := range up {
+		fmt.Fprintf(w, "janitor_targets{state=\"%s\", type=\"%s\", host=\"%s\"} %d\n", "up", t, config.HostName, c)
+	}
+	for t, c := range down {
+		fmt.Fprintf(w, "janitor_targets{state=\"%s\", type=\"%s\", host=\"%s\"} %d\n", "down", t, config.HostName, c)
+	}
 }
 
 // Serves the api/data page.

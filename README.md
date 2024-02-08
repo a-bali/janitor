@@ -21,6 +21,7 @@ Additionally, Janitor has a web interface where you can see the current status a
 Finally, Janitor includes a simple JSON api with the following endpoints:
 * `/api/data` provides a snapshot of all monitoring related data.
 * `/api/stats` provides the count of monitoring targets in functional/dysfunctional state.
+* `/api/metrics` provides target statistics in Prometheus metrics format.
 
 ## Screenshot
 ![Screenshot](https://raw.githubusercontent.com/a-bali/janitor/master/docs/screenshot.png)
@@ -58,7 +59,7 @@ Once you created a configuration file, Janitor can be launched as follows:
 
     $ janitor path/to/your/configfile.yml
 
-Janitor will log to standard output. The log is viewable on the web interface as well, where you can delete monitored targets and reload the configuration file (e.g. in case you added new targets or changed any of the settings). 
+Janitor will log to standard output. The log is viewable on the web interface as well, where you can delete monitored targets and reload the configuration file (e.g. in case you added new targets or changed any of the settings).
 
 Janitor will not daemonize itself. It is recommended to create a systemd service for janitor in case you want it running continuously.
 
