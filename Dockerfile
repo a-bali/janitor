@@ -1,8 +1,9 @@
-FROM golang:latest as builder
+FROM golang:alpine as builder
 
 COPY . /build/janitor
 WORKDIR /build/janitor
 
+RUN apk --no-cache add make git
 RUN make static_build
 
 FROM alpine:latest
