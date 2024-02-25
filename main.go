@@ -1102,8 +1102,8 @@ func serveAPIStats(w http.ResponseWriter, r *http.Request) {
 func serveAPIMetrics(w http.ResponseWriter, r *http.Request) {
 	debug("Web request " + r.RequestURI + " from " + r.RemoteAddr)
 	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintln(w, "HELP janitor_targets Number of Janitor targets")
-	fmt.Fprintln(w, "TYPE janitor_targets gauge")
+	fmt.Fprintln(w, "# HELP janitor_targets Number of Janitor targets")
+	fmt.Fprintln(w, "# TYPE janitor_targets gauge")
 	up, down := calcStats()
 	for t, c := range up {
 		fmt.Fprintf(w, "janitor_targets{state=\"%s\", type=\"%s\", host=\"%s\"} %d\n", "up", t, config.HostName, c)
