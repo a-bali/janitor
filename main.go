@@ -128,22 +128,24 @@ type MQTTMonitorData struct {
 }
 
 type PingMonitorData struct {
-	Name       string
-	LastOK     time.Time
-	LastError  time.Time
-	Status     int32
-	TotalOK    int64
-	TotalError int64
-	Errors     int
-	Timestamp  time.Time
-	Interval   int
-	Threshold  int
+	Name           string
+	LastOK         time.Time
+	LastError      time.Time
+	LastErrorStart time.Time
+	Status         int32
+	TotalOK        int64
+	TotalError     int64
+	Errors         int
+	Timestamp      time.Time
+	Interval       int
+	Threshold      int
 }
 
 type HTTPMonitorData struct {
 	Name           string
 	LastOK         time.Time
 	LastError      time.Time
+	LastErrorStart time.Time
 	Value          string
 	LastValue      string
 	LastErrorValue string
@@ -158,17 +160,18 @@ type HTTPMonitorData struct {
 }
 
 type ExecMonitorData struct {
-	Name       string
-	LastOK     time.Time
-	LastError  time.Time
-	Status     int32
-	TotalOK    int64
-	TotalError int64
-	Errors     int
-	Timestamp  time.Time
-	Interval   int
-	Timeout    int
-	Threshold  int
+	Name           string
+	LastOK         time.Time
+	LastError      time.Time
+	LastErrorStart time.Time
+	Status         int32
+	TotalOK        int64
+	TotalError     int64
+	Errors         int
+	Timestamp      time.Time
+	Interval       int
+	Timeout        int
+	Threshold      int
 }
 
 // MonitorData stores the actual status data of the monitoring process.
@@ -775,7 +778,7 @@ func checkPing() {
 				e.LastOK = time.Now()
 				e.Errors = 0
 				if e.Status == STATUS_ERROR {
-					alert("Ping", e.Name, STATUS_OK, e.LastError, "")
+					alert("Ping", e.Name, STATUS_OK, e.LastErrorStart, "")
 				}
 				e.Status = STATUS_OK
 			} else {
@@ -789,6 +792,7 @@ func checkPing() {
 				if e.Status == STATUS_WARN && e.Errors >= e.Threshold {
 					alert("Ping", e.Name, STATUS_ERROR, e.LastOK, "")
 					e.Status = STATUS_ERROR
+					e.LastErrorStart = time.Now()
 				}
 			}
 			monitorData.Unlock()
@@ -820,7 +824,7 @@ func checkHTTP() {
 				e.LastValue = val
 				e.Errors = 0
 				if e.Status == STATUS_ERROR {
-					alert("HTTP", e.Name, STATUS_OK, e.LastError, "")
+					alert("HTTP", e.Name, STATUS_OK, e.LastErrorStart, "")
 				}
 				e.Status = STATUS_OK
 			} else {
@@ -835,6 +839,7 @@ func checkHTTP() {
 				if e.Status == STATUS_WARN && e.Errors >= e.Threshold {
 					alert("HTTP", e.Name, STATUS_ERROR, e.LastOK, err)
 					e.Status = STATUS_ERROR
+					e.LastErrorStart = time.Now()
 				}
 
 			}
@@ -865,7 +870,7 @@ func checkExec() {
 
 				e.Errors = 0
 				if e.Status == STATUS_ERROR {
-					alert("Exec", e.Name, STATUS_OK, e.LastError, "")
+					alert("Exec", e.Name, STATUS_OK, e.LastErrorStart, "")
 				}
 				e.Status = STATUS_OK
 			} else {
@@ -880,6 +885,7 @@ func checkExec() {
 				if e.Status == STATUS_WARN && e.Errors >= e.Threshold {
 					alert("Exec", e.Name, STATUS_ERROR, e.LastOK, "")
 					e.Status = STATUS_ERROR
+					e.LastErrorStart = time.Now()
 				}
 
 			}
