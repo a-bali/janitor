@@ -41,8 +41,7 @@
 		td {
 			border: 1px solid grey;
 			padding: 2px;
-			text-align: center;
-			word-break: break-all
+			text-align: center
 		}
 
 		th {
@@ -52,6 +51,14 @@
 
 		td.name {
 			text-align: left
+		}
+
+		td.payload {
+		    width: 100%;
+			max-width: 0;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
 		}
 
 		td.status0,
@@ -88,6 +95,10 @@
 
 		.log {
 			font-size: 70%
+		}
+
+		.log td {
+		    word-break: break-all;
 		}
 
 		.logts {
@@ -186,7 +197,7 @@
 					<br />
 					<span class="relatime">({{ relaTime $value.LastSeen }} ago)</span>
 				</td>
-				<td> {{ $value.LastPayload }}</td>
+				<td class="payload" title='{{ $value.LastPayload }}'> {{ $value.LastPayload }}</td>
 				<td> {{ len $value.History }}
 					<a href="#" data-target="modal{{id $topic}}" data-toggle="modal">+</a>
 					<div id="modal{{id $topic}}" class="modal">
