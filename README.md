@@ -1,3 +1,35 @@
+
+<div align="right">
+  <details>
+    <summary >🌐 Language</summary>
+    <div>
+      <div align="center">
+        <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=en">English</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=zh-CN">简体中文</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=zh-TW">繁體中文</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=ja">日本語</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=ko">한국어</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=hi">हिन्दी</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=th">ไทย</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=fr">Français</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=de">Deutsch</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=es">Español</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=it">Italiano</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=ru">Русский</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=pt">Português</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=nl">Nederlands</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=pl">Polski</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=ar">العربية</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=fa">فارسی</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=tr">Türkçe</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=vi">Tiếng Việt</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=id">Bahasa Indonesia</a>
+        | <a href="https://openaitx.github.io/view.html?user=a-bali&project=janitor&lang=as">অসমীয়া</
+      </div>
+    </div>
+  </details>
+</div>
+
 # janitor
 ## Objective
 Janitor is a standalone tool that monitors the availability of your IOT devices and alerts you in case a device goes missing or stops transmitting data. This is particulary useful if you have many sensors, possibly with unstable hardware or connection, so you can take action in case of any issues and monitor the stability of your devices.
