@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"html/template"
 	"io"
 	"math"
 	"net/http"
@@ -18,7 +19,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"html/template"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -255,6 +255,8 @@ const (
 	STATUS_OK    = 0
 	STATUS_WARN  = 1
 	STATUS_ERROR = 2
+	// maxHTTPResponseSize limits the amount of data retained from an HTTP monitor.
+	maxHTTPResponseSize = 1 << 20
 )
 
 func init() {
@@ -463,12 +465,12 @@ func loadConfig() bool {
 		e.Name = target.Name
 		if target.Interval != 0 {
 			e.Interval = target.Interval
-		} else if e.Interval == 0 {
+		} else {
 			e.Interval = getConfig().Monitor.Ping.Interval
 		}
 		if target.Threshold != 0 {
 			e.Threshold = target.Threshold
-		} else if e.Threshold == 0 {
+		} else {
 			e.Threshold = getConfig().Monitor.Ping.Threshold
 		}
 		monitorData.Ping[target.Address] = e
@@ -499,17 +501,17 @@ func loadConfig() bool {
 		e.Name = target.Name
 		if target.Interval != 0 {
 			e.Interval = target.Interval
-		} else if e.Interval == 0 {
+		} else {
 			e.Interval = getConfig().Monitor.HTTP.Interval
 		}
 		if target.Timeout != 0 {
 			e.Timeout = target.Timeout
-		} else if e.Timeout == 0 {
+		} else {
 			e.Timeout = getConfig().Monitor.HTTP.Timeout
 		}
 		if target.Threshold != 0 {
 			e.Threshold = target.Threshold
-		} else if e.Threshold == 0 {
+		} else {
 			e.Threshold = getConfig().Monitor.HTTP.Threshold
 		}
 		e.Value = target.Value
@@ -541,17 +543,17 @@ func loadConfig() bool {
 		e.Name = target.Name
 		if target.Interval != 0 {
 			e.Interval = target.Interval
-		} else if e.Interval == 0 {
+		} else {
 			e.Interval = getConfig().Monitor.Exec.Interval
 		}
 		if target.Timeout != 0 {
 			e.Timeout = target.Timeout
-		} else if e.Timeout == 0 {
+		} else {
 			e.Timeout = getConfig().Monitor.Exec.Timeout
 		}
 		if target.Threshold != 0 {
 			e.Threshold = target.Threshold
-		} else if e.Threshold == 0 {
+		} else {
 			e.Threshold = getConfig().Monitor.Exec.Threshold
 		}
 		monitorData.Exec[target.Command] = e
@@ -571,6 +573,25 @@ func loadConfig() bool {
 		}
 	}
 	monitorData.Unlock()
+
+	// Disconnect MQTT clients that are no longer configured, and reconnect when
+	// the configured broker changes.
+	if getConfig().Monitor.MQTT.Server == "" {
+		if monitorMqttClient != nil {
+			if monitorMqttClient.IsConnected() {
+				monitorMqttClient.Disconnect(1)
+			}
+			monitorMqttClient = nil
+		}
+	}
+	if getConfig().Alert.MQTT.Server == "" || getConfig().Alert.MQTT.Topic == "" {
+		if alertMqttClient != nil {
+			if alertMqttClient.IsConnected() {
+				alertMqttClient.Disconnect(1)
+			}
+			alertMqttClient = nil
+		}
+	}
 
 	// connect MQTT if configured
 	if getConfig().Monitor.MQTT.Server != "" {
@@ -847,13 +868,10 @@ func matchMQTTTopic(pattern string, subject string) bool {
 		if i >= slen {
 			return false
 		}
-		if len(pl[i]) == 0 && len(sl[i]) == 0 {
+		if pl[i] == "+" {
 			continue
 		}
-		if len(pl[i]) == 0 {
-			continue
-		}
-		if pl[i][0] != '+' && pl[i] != sl[i] {
+		if strings.ContainsAny(pl[i], "+#") || pl[i] != sl[i] {
 			return false
 		}
 	}
@@ -863,7 +881,7 @@ func matchMQTTTopic(pattern string, subject string) bool {
 // Periodically iterate through ping targets and perform check if required.
 func checkPing() {
 	type pingEntry struct {
-		address string
+		address  string
 		interval int
 		timeout  int
 	}
@@ -1068,9 +1086,11 @@ func performHTTPCheck(url string, pattern string, timeout int) (bool, string, st
 		if resp.StatusCode != http.StatusOK {
 			errValue = fmt.Sprintf("status code %d", resp.StatusCode)
 		} else {
-			bodyBytes, bodyErr := io.ReadAll(resp.Body)
+			bodyBytes, bodyErr := io.ReadAll(io.LimitReader(resp.Body, maxHTTPResponseSize+1))
 			if bodyErr != nil {
 				errValue = bodyErr.Error()
+			} else if len(bodyBytes) > maxHTTPResponseSize {
+				errValue = fmt.Sprintf("response body exceeds %d bytes", maxHTTPResponseSize)
 			} else {
 				okValue = string(bodyBytes)
 				if pattern != "" && !strings.Contains(okValue, pattern) {
@@ -1264,7 +1284,7 @@ func serveAPIMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprintln(w, "# HELP janitor_targets Number of Janitor targets")
 	fmt.Fprintln(w, "# TYPE janitor_targets gauge")
-	hostname := getConfig().HostName
+	hostname := prometheusLabelValue(getConfig().HostName)
 	up, down := calcStats()
 	for t, c := range up {
 		fmt.Fprintf(w, "janitor_targets{state=\"%s\", type=\"%s\", host=\"%s\"} %d\n", "up", t, hostname, c)
@@ -1272,6 +1292,11 @@ func serveAPIMetrics(w http.ResponseWriter, r *http.Request) {
 	for t, c := range down {
 		fmt.Fprintf(w, "janitor_targets{state=\"%s\", type=\"%s\", host=\"%s\"} %d\n", "down", t, hostname, c)
 	}
+}
+
+// prometheusLabelValue escapes a value for use inside a Prometheus label.
+func prometheusLabelValue(value string) string {
+	return strings.NewReplacer(`\\`, `\\\\`, `"`, `\"`, "\n", `\n`).Replace(value)
 }
 
 // Serves the api/data page.

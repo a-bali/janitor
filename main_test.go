@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -64,6 +65,10 @@ func TestMatchMQTTTopic(t *testing.T) {
 		// pattern longer than subject (was index-out-of-range panic)
 		{"a/b/c", "a/b", false},
 		{"a/b/c/d", "a/b", false},
+		// wildcard characters must occupy a complete topic level
+		{"home/+suffix", "home/sensor", false},
+		{"home/pre+fix", "home/pre+fix", false},
+		{"home/#suffix", "home/sensor", false},
 	}
 	for _, tt := range tests {
 		got := matchMQTTTopic(tt.pattern, tt.subject)
@@ -290,6 +295,41 @@ monitor:
 	}
 }
 
+func TestLoadConfigRefreshesInheritedTargetValues(t *testing.T) {
+	resetGlobals()
+	dir := t.TempDir()
+	configFile = dir + "/config.yml"
+	raw := `
+monitor:
+  ping:
+    interval: 15
+    threshold: 4
+    targets:
+      - name: "Router"
+        address: "router.local"
+`
+	if err := os.WriteFile(configFile, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	monitorData.Lock()
+	monitorData.Ping["router.local"] = &PingMonitorData{
+		Name: "Router", Interval: 99, Threshold: 99,
+	}
+	monitorData.Unlock()
+
+	if !loadConfig() {
+		t.Fatal("loadConfig returned false")
+	}
+
+	monitorData.RLock()
+	entry := monitorData.Ping["router.local"]
+	monitorData.RUnlock()
+	if entry.Interval != 15 || entry.Threshold != 4 {
+		t.Fatalf("inherited values = interval %d, threshold %d; want 15, 4", entry.Interval, entry.Threshold)
+	}
+}
+
 // ---- calcStats --------------------------------------------------------------
 
 func TestCalcStats_Empty(t *testing.T) {
@@ -450,6 +490,22 @@ func TestServeAPIMetrics(t *testing.T) {
 	}
 }
 
+func TestServeAPIMetricsEscapesHostname(t *testing.T) {
+	resetGlobals()
+	configLock.Lock()
+	config.HostName = `host"with\newline` + "\n"
+	configLock.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
+	w := httptest.NewRecorder()
+	serveAPIMetrics(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, `host="host\"with\newline\n"`) {
+		t.Fatalf("hostname was not Prometheus-escaped: %q", body)
+	}
+}
+
 // ---- performHTTPCheck -------------------------------------------------------
 
 func TestPerformHTTPCheck_Success(t *testing.T) {
@@ -535,6 +591,24 @@ func TestPerformHTTPCheck_Timeout(t *testing.T) {
 	}
 	if errStr == "" {
 		t.Error("expected non-empty errStr on timeout")
+	}
+}
+
+func TestPerformHTTPCheck_RejectsOversizedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, maxHTTPResponseSize+1))
+	}))
+	defer srv.Close()
+
+	ok, errValue, value := performHTTPCheck(srv.URL, "", 5000)
+	if ok {
+		t.Fatal("expected oversized response to fail")
+	}
+	if !strings.Contains(errValue, "exceeds") {
+		t.Fatalf("error = %q; want oversized-response error", errValue)
+	}
+	if value != "" {
+		t.Fatalf("value length = %d; want empty value", len(value))
 	}
 }
 
