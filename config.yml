@@ -22,6 +22,12 @@ web:
   host: ""
   port: 8080
 
+# Optional SQLite persistence. Persistence is disabled unless this is configured.
+# Use a durable state directory; missing parent directories are created automatically.
+# In Docker, use /var/lib/janitor/janitor.db and mount /var/lib/janitor as a volume.
+#persistence:
+#  db: ~/.local/state/janitor/janitor.db
+
 ### MONITORING TARGETS
 ### All these blocks are optional. If missing, will not be monitored.
 
@@ -97,7 +103,7 @@ monitor:
         value: nas
         # Interval between checks in seconds (default: default interval specified above)
         interval: 10
-        # Timeout for the HTTP requests in milliseconds (default: default interval specified above)
+        # Timeout for the HTTP requests in milliseconds (default: default timeout specified above)
         timeout: 500
         # Threshold for alerts - number of consecutive failed requests to reach (default: default threshold specified above)
         threshold: 3
@@ -144,7 +150,7 @@ alert:
   #exec: /home/joe/bin/alert.sh
 
   # Alerting by posting to predefined MQTT topic with a JSON payload. Example payload with description of the structure:
-  # {"type":"HTTP",                                      // type of the sensor - potential values: HTTP, Ping, MQTT
+  # {"type":"HTTP",                                      // type of the sensor - potential values: HTTP, Ping, MQTT, Exec
   #  "name":"NAS",                                       // name of the sensor
   #  "status":"ERROR",                                   // status of the sensor - potential values: OK, ERROR
   #  "since":"2020-03-22T18:58:00.157284409+01:00",      // last error/ok timestamp for sensor

@@ -186,7 +186,7 @@
   .overlay.open { display: flex; }
   .dialog {
     background: var(--card); border-radius: .5rem;
-    width: min(560px, 90vw); max-height: 80vh; overflow-y: auto;
+    width: clamp(320px, 66vw, 1000px); max-height: 80vh; overflow-y: auto;
     padding: 1.25rem; box-shadow: 0 20px 40px rgba(0,0,0,.2);
   }
   .dialog h3 { font-size: .82rem; margin-bottom: .75rem; }
@@ -238,7 +238,7 @@
       <table>
         <thead><tr>
           <th>Topic</th><th>First seen</th><th>Last seen</th><th>Payload</th>
-          <th>History</th><th>Samples</th><th>Avg period</th><th>Timeout</th>
+          <th>History</th><th>Samples (7d)</th><th>Avg period</th><th>Timeout</th>
           <th>Last error</th><th>Errors</th>
         </tr></thead>
         <tbody>
@@ -324,7 +324,7 @@
       <table>
         <thead><tr>
           <th>Name</th><th>Address</th><th>Interval</th><th>Threshold</th>
-          <th>Last OK</th><th>Last error</th><th>Total OK</th><th>Total error</th>
+          <th>Last OK</th><th>Last error</th><th>Total OK (7d)</th><th>Total error (7d)</th>
         </tr></thead>
         <tbody>
           {{ range $host, $v := .MonitorData.Ping }}
@@ -396,7 +396,7 @@
       <table>
         <thead><tr>
           <th>Name</th><th>Address</th><th>Interval</th><th>Timeout</th><th>Threshold</th>
-          <th>Last OK</th><th>Last error</th><th>Total OK</th><th>Total error</th>
+          <th>Last OK</th><th>Last error</th><th>Total OK (7d)</th><th>Total error (7d)</th>
           <th>Response</th><th>Last error msg</th>
         </tr></thead>
         <tbody>
@@ -500,7 +500,7 @@
       <table>
         <thead><tr>
           <th>Name</th><th>Command</th><th>Interval</th><th>Timeout</th><th>Threshold</th>
-          <th>Last OK</th><th>Last error</th><th>Total OK</th><th>Total error</th>
+          <th>Last OK</th><th>Last error</th><th>Total OK (7d)</th><th>Total error (7d)</th>
         </tr></thead>
         <tbody>
           {{ range $command, $v := .MonitorData.Exec }}
@@ -646,6 +646,10 @@
   });
 
   document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      var open = document.querySelector('.overlay.open');
+      if (open) { open.classList.remove('open'); return; }
+    }
     var input = e.target.closest('.editable-input');
     if (!input) return;
     if (e.key === 'Enter') {
