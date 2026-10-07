@@ -1,0 +1,34 @@
+name: Checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Validate workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - name: Check formatting
+        run: test -z "$(gofmt -l ./*.go)"
+      - name: Verify dependencies
+        run: go mod verify
+      - name: Test with race detector
+        run: go test -race -count=1 -timeout 60s ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Build release binaries
+        run: make build-all
+      - name: Build Docker image
+        run: docker build -t janitor-check .

@@ -1,4 +1,4 @@
-FROM golang:alpine as builder
+FROM golang:alpine AS builder
 
 COPY . /build/janitor
 WORKDIR /build/janitor
