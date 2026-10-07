@@ -1,2 +1,6 @@
 janitor
 dist/*
+.pi/
+*.db
+*.db-wal
+*.db-shm

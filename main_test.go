@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +19,11 @@ import (
 // ---- helpers ----------------------------------------------------------------
 
 func resetGlobals() {
+	if err := closePersistence(); err != nil {
+		panic(err)
+	}
+	configurationLoaded = false
+	stateEpoch = time.Time{}
 	configLock.Lock()
 	config = &Config{}
 	setDefaults(config)
@@ -32,6 +38,7 @@ func resetGlobals() {
 	monitorData.Ping = make(map[string]*PingMonitorData)
 	monitorData.HTTP = make(map[string]*HTTPMonitorData)
 	monitorData.Exec = make(map[string]*ExecMonitorData)
+	webEdits = make(map[monitorKey]webEdit)
 	monitorData.Unlock()
 }
 
@@ -327,6 +334,202 @@ monitor:
 	monitorData.RUnlock()
 	if entry.Interval != 15 || entry.Threshold != 4 {
 		t.Fatalf("inherited values = interval %d, threshold %d; want 15, 4", entry.Interval, entry.Threshold)
+	}
+}
+
+func TestPersistenceRoundTripAndRetention(t *testing.T) {
+	resetGlobals()
+	if err := yaml.Unmarshal([]byte(`monitor:
+  mqtt:
+    server: broker
+    history: 2
+    targets:
+      - topic: home/temp
+        name: Temperature
+  ping:
+    interval: 60
+    threshold: 2
+    targets:
+      - address: router
+        name: Router
+  http:
+    interval: 60
+    timeout: 1000
+    threshold: 2
+    targets:
+      - address: http://service
+        name: Service
+        value: new
+  exec:
+    interval: 60
+    timeout: 1000
+    threshold: 2
+    targets:
+      - command: test -f /tmp/foo
+        name: File
+logsize: 2
+`), config); err != nil {
+		t.Fatal(err)
+	}
+	setDefaults(config)
+	dbPath := t.TempDir() + "/nested/janitor.db"
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	monitorData.Lock()
+	monitorData.MQTT["home/temp"] = &MQTTMonitorData{
+		Name: "Temperature", FirstSeen: now.Add(-4 * time.Minute), LastSeen: now,
+		LastPayload: "23.5", History: []TimedEntry{
+			{Timestamp: now.Add(-3 * time.Minute), Value: "21"},
+			{Timestamp: now.Add(-2 * time.Minute), Value: "22"},
+			{Timestamp: now.Add(-time.Minute), Value: "23"},
+		},
+		CustomTimeout: 120, Status: STATUS_ERROR, Samples: 7, Alerts: 2,
+	}
+	monitorData.Ping["router"] = &PingMonitorData{
+		Name: "Router", Interval: 30, Threshold: 3, LastOK: now,
+		Status: STATUS_WARN, TotalOK: 10, TotalError: 2, Errors: 1, Timestamp: now,
+	}
+	monitorData.HTTP["http://service"] = &HTTPMonitorData{
+		Name: "Service", Value: "ok", Interval: 30, Timeout: 500,
+		Threshold: 3, LastValue: "ok", LastErrorValue: "timeout",
+		Status: STATUS_ERROR, TotalOK: 8, TotalError: 4, Errors: 3, Timestamp: now,
+	}
+	monitorData.Exec["test -f /tmp/foo"] = &ExecMonitorData{
+		Name: "File", Interval: 30, Timeout: 500, Threshold: 3,
+		Status: STATUS_OK, TotalOK: 9, TotalError: 1, Timestamp: now,
+	}
+	monitorData.Unlock()
+
+	if err := configurePersistence(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	logLock.Lock()
+	logHistory = []TimedEntry{
+		{Timestamp: now, Value: "latest"},
+		{Timestamp: now.Add(-time.Minute), Value: "middle"},
+		{Timestamp: now.Add(-2 * time.Minute), Value: "old"},
+	}
+	logLock.Unlock()
+	if err := persistenceStore.flush(); err != nil {
+		t.Fatal(err)
+	}
+	var storedLogs int
+	if err := persistenceStore.db.QueryRow("SELECT COUNT(*) FROM log_history").Scan(&storedLogs); err != nil {
+		t.Fatal(err)
+	}
+	if storedLogs != 2 {
+		t.Fatalf("stored log rows = %d; want 2", storedLogs)
+	}
+	if err := configurePersistence(""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Recreate the configuration-owned monitor entries as startup would.
+	resetGlobals()
+	if err := yaml.Unmarshal([]byte(`monitor:
+  mqtt:
+    server: broker
+    history: 2
+    targets:
+      - topic: home/temp
+        name: Temperature
+  ping:
+    interval: 60
+    threshold: 2
+    targets:
+      - address: router
+        name: Router
+  http:
+    interval: 60
+    timeout: 1000
+    threshold: 2
+    targets:
+      - address: http://service
+        name: Service
+        value: new
+  exec:
+    interval: 60
+    timeout: 1000
+    threshold: 2
+    targets:
+      - command: test -f /tmp/foo
+        name: File
+logsize: 2
+`), config); err != nil {
+		t.Fatal(err)
+	}
+	setDefaults(config)
+	monitorData.Lock()
+	monitorData.Ping["router"] = &PingMonitorData{Name: "Router", Interval: 60, Threshold: 2}
+	monitorData.HTTP["http://service"] = &HTTPMonitorData{Name: "Service", Value: "new", Interval: 60, Timeout: 1000, Threshold: 2}
+	monitorData.Exec["test -f /tmp/foo"] = &ExecMonitorData{Name: "File", Interval: 60, Timeout: 1000, Threshold: 2}
+	monitorData.Unlock()
+	if err := configurePersistence(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	defer configurePersistence("")
+
+	monitorData.RLock()
+	mqtt := monitorData.MQTT["home/temp"]
+	ping := monitorData.Ping["router"]
+	httpEntry := monitorData.HTTP["http://service"]
+	execEntry := monitorData.Exec["test -f /tmp/foo"]
+	monitorData.RUnlock()
+	if mqtt == nil || mqtt.Samples != 7 || mqtt.CustomTimeout != 120 || mqtt.Status != STATUS_ERROR {
+		t.Fatalf("MQTT state was not restored: %+v", mqtt)
+	}
+	if len(mqtt.History) != 2 || mqtt.History[0].Value != "22" || mqtt.AvgTransmit <= 0 {
+		t.Fatalf("MQTT history was not bounded/restored: %+v", mqtt.History)
+	}
+	if ping == nil || ping.TotalOK != 10 || ping.Interval != 60 || ping.Threshold != 2 {
+		t.Fatalf("Ping state/config was not restored correctly: %+v", ping)
+	}
+	if httpEntry == nil || httpEntry.TotalError != 4 || httpEntry.Value != "new" || httpEntry.Timeout != 1000 {
+		t.Fatalf("HTTP state/config was not restored correctly: %+v", httpEntry)
+	}
+	if execEntry == nil || execEntry.TotalOK != 9 || execEntry.Interval != 60 || execEntry.Timeout != 1000 {
+		t.Fatalf("Exec state/config was not restored correctly: %+v", execEntry)
+	}
+
+	logLock.RLock()
+	defer logLock.RUnlock()
+	if len(logHistory) != 2 || logHistory[0].Value != "latest" || logHistory[1].Value != "middle" {
+		t.Fatalf("log history was not bounded/restored: %+v", logHistory)
+	}
+}
+
+func TestPersistenceDisabledWithoutDatabasePath(t *testing.T) {
+	resetGlobals()
+	if err := configurePersistence(""); err != nil {
+		t.Fatal(err)
+	}
+	persistState()
+	if persistenceStore != nil {
+		t.Fatal("persistence should be disabled without persistence.db")
+	}
+}
+
+func TestPersistenceCreatesDirectoryAndRestrictsPermissions(t *testing.T) {
+	resetGlobals()
+	dbPath := t.TempDir() + "/.cache/janitor/janitor.db"
+	if err := configurePersistence(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	defer configurePersistence("")
+
+	dirInfo, err := os.Stat(filepath.Dir(dbPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirInfo.Mode().Perm() != 0700 {
+		t.Errorf("database directory permissions = %o; want 700", dirInfo.Mode().Perm())
+	}
+	fileInfo, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fileInfo.Mode().Perm() != 0600 {
+		t.Errorf("database file permissions = %o; want 600", fileInfo.Mode().Perm())
 	}
 }
 
@@ -681,8 +884,8 @@ func TestDeleteWebItem_Ping(t *testing.T) {
 		}
 	}
 	configLock.RUnlock()
-	if found {
-		t.Error("expected ping target to be removed from config")
+	if !found {
+		t.Error("YAML target membership must remain intact so Reload config can restore it")
 	}
 }
 
@@ -828,6 +1031,54 @@ func TestConfigWebItem_InvalidValue(t *testing.T) {
 	}
 }
 
+func TestConfigWebItem_HTTPTimeoutResetRestoresYAML(t *testing.T) {
+	resetGlobals()
+
+	configLock.Lock()
+	config.Monitor.HTTP.Timeout = 5000
+	configLock.Unlock()
+
+	monitorData.Lock()
+	monitorData.HTTP["http://srv"] = &HTTPMonitorData{Name: "srv", Timeout: 1}
+	monitorData.Unlock()
+
+	w := postWebItem(t, configWebItem, url.Values{"type": {"http"}, "name": {"http://srv"}, "timeout": {"0"}})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d; want %d (body %q)", w.Code, http.StatusSeeOther, w.Body.String())
+	}
+
+	monitorData.RLock()
+	got := monitorData.HTTP["http://srv"].Timeout
+	monitorData.RUnlock()
+	if got != 5000 {
+		t.Errorf("Timeout = %d; want 5000 (YAML value)", got)
+	}
+}
+
+func TestConfigWebItem_ExecResetRestoresYAML(t *testing.T) {
+	resetGlobals()
+
+	configLock.Lock()
+	config.Monitor.Exec.Threshold = 4
+	configLock.Unlock()
+
+	monitorData.Lock()
+	monitorData.Exec["true"] = &ExecMonitorData{Name: "cmd", Threshold: 9}
+	monitorData.Unlock()
+
+	w := postWebItem(t, configWebItem, url.Values{"type": {"exec"}, "name": {"true"}, "threshold": {"0"}})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d; want %d (body %q)", w.Code, http.StatusSeeOther, w.Body.String())
+	}
+
+	monitorData.RLock()
+	got := monitorData.Exec["true"].Threshold
+	monitorData.RUnlock()
+	if got != 4 {
+		t.Errorf("Threshold = %d; want 4 (YAML value)", got)
+	}
+}
+
 // ---- log and logHistory -----------------------------------------------------
 
 func TestLog_PrependsEntry(t *testing.T) {
@@ -891,4 +1142,75 @@ func TestConcurrentCalcStats(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// ---- optional config file ---------------------------------------------------
+
+func TestLoadConfigMissingFileStartsWithoutMonitoring(t *testing.T) {
+	resetGlobals()
+	configFile = filepath.Join(t.TempDir(), "does-not-exist.yml")
+	if !loadConfig() {
+		t.Fatal("missing config file should not be fatal")
+	}
+	if persistenceStore != nil {
+		t.Fatal("persistence should be disabled without a configured database")
+	}
+	monitorData.RLock()
+	targets := len(monitorData.Ping) + len(monitorData.HTTP) + len(monitorData.Exec) + len(monitorData.MQTT)
+	monitorData.RUnlock()
+	if targets != 0 {
+		t.Fatalf("missing config created %d targets; want none", targets)
+	}
+}
+
+func TestLoadConfigMalformedFileIsFatal(t *testing.T) {
+	resetGlobals()
+	configFile = filepath.Join(t.TempDir(), "bad.yml")
+	if err := os.WriteFile(configFile, []byte("monitor: [unterminated"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if loadConfig() {
+		t.Fatal("malformed config should be fatal")
+	}
+}
+
+// ---- rolling counters -------------------------------------------------------
+
+func TestCounterWindowPrunesOldDays(t *testing.T) {
+	now := time.Now()
+	buckets := dayBuckets{}
+	buckets[now.UTC().Format(dayLayout)] = 3
+	buckets[now.UTC().AddDate(0, 0, -1).Format(dayLayout)] = 2
+	buckets[now.UTC().AddDate(0, 0, -counterWindowDays).Format(dayLayout)] = 100
+	if got := buckets.total(now); got != 5 {
+		t.Fatalf("window total = %d; want 5", got)
+	}
+	if _, ok := buckets[now.UTC().AddDate(0, 0, -counterWindowDays).Format(dayLayout)]; ok {
+		t.Fatal("bucket outside the window was not pruned")
+	}
+}
+
+func TestEvaluateMQTTIgnoresPreEpochSilence(t *testing.T) {
+	resetGlobals()
+	configLock.Lock()
+	config.Monitor.MQTT.Server = "broker"
+	configLock.Unlock()
+	stateEpoch = time.Now()
+	monitorData.Lock()
+	monitorData.MQTT["home/temp"] = &MQTTMonitorData{
+		Name: "Temperature", LastSeen: time.Now().Add(-2 * time.Hour),
+		AvgTransmit: 1, CustomTimeout: 3600, Status: STATUS_OK,
+	}
+	monitorData.MQTT["home/error"] = &MQTTMonitorData{
+		Name: "Error", LastSeen: time.Now().Add(-2 * time.Hour),
+		AvgTransmit: 1, CustomTimeout: 3600, Status: STATUS_ERROR,
+	}
+	monitorData.Unlock()
+	evaluateMQTTState()
+	if got := monitorData.MQTT["home/temp"].Status; got == STATUS_ERROR {
+		t.Fatal("restored topic was reported as timed out before any new activity")
+	}
+	if got := monitorData.MQTT["home/error"].Status; got != STATUS_ERROR {
+		t.Fatal("restored error was silently recovered before any new activity")
+	}
 }

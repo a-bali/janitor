@@ -15,9 +15,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -34,6 +34,9 @@ type Config struct {
 	Web      struct {
 		Host string
 		Port int
+	}
+	Persistence struct {
+		DB string
 	}
 	Alert struct {
 		Telegram struct {
@@ -125,6 +128,7 @@ type MQTTMonitorData struct {
 	CustomTimeout float64
 	Status        int32
 	Samples       int64
+	SampleDays    dayBuckets
 	Alerts        int64
 	Deleted       bool
 }
@@ -136,7 +140,9 @@ type PingMonitorData struct {
 	LastErrorStart time.Time
 	Status         int32
 	TotalOK        int64
+	OKDays         dayBuckets
 	TotalError     int64
+	ErrorDays      dayBuckets
 	Errors         int
 	Timestamp      time.Time
 	Interval       int
@@ -153,7 +159,9 @@ type HTTPMonitorData struct {
 	LastErrorValue string
 	Status         int32
 	TotalOK        int64
+	OKDays         dayBuckets
 	TotalError     int64
+	ErrorDays      dayBuckets
 	Errors         int
 	Timestamp      time.Time
 	Interval       int
@@ -168,7 +176,9 @@ type ExecMonitorData struct {
 	LastErrorStart time.Time
 	Status         int32
 	TotalOK        int64
+	OKDays         dayBuckets
 	TotalError     int64
+	ErrorDays      dayBuckets
 	Errors         int
 	Timestamp      time.Time
 	Interval       int
@@ -239,6 +249,14 @@ var (
 
 	monitorMqttClient mqtt.Client
 	alertMqttClient   mqtt.Client
+
+	persistenceStore *sqlitePersistence
+	monitorMqttMu    sync.Mutex
+	alertMqttMu      sync.Mutex
+	telegramMu       sync.Mutex
+	callbackMu       sync.Mutex
+	mqttCallbacks    sync.WaitGroup
+	stopping         atomic.Bool
 
 	//go:embed templates/index.html
 	index_template string
@@ -313,9 +331,11 @@ func main() {
 		os.Exit(1)
 	}
 	configFile = os.Args[1]
-	loadConfig()
+	if !loadConfig() {
+		os.Exit(1)
+	}
 	// start monitoring loop
-	monitoringLoop()
+	stopMonitoring := monitoringLoop()
 
 	// launch web server
 	log(fmt.Sprintf("Launching web server at %s:%d", getConfig().Web.Host, getConfig().Web.Port))
@@ -341,16 +361,34 @@ func main() {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 
+	callbackMu.Lock()
+	stopping.Store(true)
+	callbackMu.Unlock()
 	log("Shutting down...")
+	stopMonitoring()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		fmt.Printf("Web server shutdown: %s\n", err)
+		_ = srv.Close()
+	}
+	configurationMu.Lock()
+	defer configurationMu.Unlock()
+	monitorMqttMu.Lock()
 	if monitorMqttClient != nil && monitorMqttClient.IsConnected() {
 		monitorMqttClient.Disconnect(250)
 	}
+	monitorMqttMu.Unlock()
+	alertMqttMu.Lock()
 	if alertMqttClient != nil && alertMqttClient.IsConnected() {
 		alertMqttClient.Disconnect(250)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	srv.Shutdown(ctx)
+	alertMqttMu.Unlock()
+	mqttCallbacks.Wait()
+	if err := closePersistence(); err != nil {
+		fmt.Printf("Unable to save state during shutdown: %s\n", err)
+		os.Exit(1)
+	}
 }
 
 // Set defaults for configuration values.
@@ -406,9 +444,24 @@ func setDefaults(c *Config) {
 	}
 }
 
-// Loads or reloads the configuration and initializes MQTT and Telegram connections accordingly.
-// Returns true on success, false if the config file could not be read or parsed (existing config preserved).
+var configurationMu sync.Mutex
+var configurationLoaded bool
+
+// Protected by monitorData. In-flight checks must not update a replacement state.
+var monitorGeneration uint64
+
+// Protected by monitorData. Monitor silence is measured from this time when it is
+// newer than LastSeen, so restoring an old database does not fire false alerts.
+var stateEpoch time.Time
+
+// Loads configuration and persistence atomically, then refreshes integrations.
+// A failed read, validation, or persistence transaction preserves live state.
 func loadConfig() bool {
+	configurationMu.Lock()
+	defer configurationMu.Unlock()
+	if stopping.Load() {
+		return false
+	}
 
 	// set up initial config for logging and others to work
 	if config == nil {
@@ -416,166 +469,38 @@ func loadConfig() bool {
 		setDefaults(config)
 	}
 
-	log("Starting " + fullversion)
-
-	// (re)populate config struct from file
+	// (re)populate config struct from file. A missing file is not an error: start
+	// with defaults and no monitoring. Any other read error or a parse error is fatal.
+	newconfig := new(Config)
 	yamlFile, err := os.ReadFile(configFile)
 	if err != nil {
+		// A missing file is only tolerated on the initial load, when starting
+		// without monitoring is the intended behavior. On reload it must be
+		// fatal: treating it as an empty config would delete live monitor state
+		// and persist that deletion.
+		if !os.IsNotExist(err) || configurationLoaded {
+			log("Unable to load config: " + err.Error())
+			return false
+		}
+		log("Config file not found, starting without monitoring: " + configFile)
+	} else if err := yaml.Unmarshal([]byte(os.ExpandEnv(string(yamlFile))), newconfig); err != nil {
 		log("Unable to load config: " + err.Error())
 		return false
 	}
 
-	replacedYamlFile := os.ExpandEnv(string(yamlFile))
-
-	newconfig := new(Config)
-
-	err = yaml.Unmarshal([]byte(replacedYamlFile), &newconfig)
-	if err != nil {
-		log("Unable to load config: " + err.Error())
-		if config != nil {
-			return false
-		}
-	}
-
 	setDefaults(newconfig)
 
-	configLock.Lock()
-	config = newconfig
-	configLock.Unlock()
-
+	if err := configurePersistenceForConfig(newconfig, !configurationLoaded); err != nil {
+		log("Unable to load config: " + err.Error())
+		return false
+	}
+	configurationLoaded = true
+	log("Starting " + fullversion)
 	debug("Loaded config: " + fmt.Sprintf("%+v", getConfig()))
 
-	// update monitor targets based on new configuration
-	monitorData.Lock()
-
-	// remove deleted MQTT targets
-	for k := range monitorData.MQTT {
-		if monitorData.MQTT[k].Deleted {
-			delete(monitorData.MQTT, k)
-		}
-	}
-
-	// update monitored ping hosts
-	for _, target := range getConfig().Monitor.Ping.Targets {
-		e, ok := monitorData.Ping[target.Address]
-		if !ok {
-			monitorData.Ping[target.Address] = &PingMonitorData{}
-			e = monitorData.Ping[target.Address]
-		}
-		e.Name = target.Name
-		if target.Interval != 0 {
-			e.Interval = target.Interval
-		} else {
-			e.Interval = getConfig().Monitor.Ping.Interval
-		}
-		if target.Threshold != 0 {
-			e.Threshold = target.Threshold
-		} else {
-			e.Threshold = getConfig().Monitor.Ping.Threshold
-		}
-		monitorData.Ping[target.Address] = e
-	}
-
-	// remove deleted ping hosts from monitoring
-	for k := range monitorData.Ping {
-		found := false
-		for _, c := range getConfig().Monitor.Ping.Targets {
-			if k == c.Address {
-				found = true
-				break
-			}
-		}
-		if !found {
-			delete(monitorData.Ping, k)
-		}
-	}
-
-	// update monitored http hosts
-	for _, target := range getConfig().Monitor.HTTP.Targets {
-
-		e, ok := monitorData.HTTP[target.Address]
-		if !ok {
-			monitorData.HTTP[target.Address] = &HTTPMonitorData{}
-			e = monitorData.HTTP[target.Address]
-		}
-		e.Name = target.Name
-		if target.Interval != 0 {
-			e.Interval = target.Interval
-		} else {
-			e.Interval = getConfig().Monitor.HTTP.Interval
-		}
-		if target.Timeout != 0 {
-			e.Timeout = target.Timeout
-		} else {
-			e.Timeout = getConfig().Monitor.HTTP.Timeout
-		}
-		if target.Threshold != 0 {
-			e.Threshold = target.Threshold
-		} else {
-			e.Threshold = getConfig().Monitor.HTTP.Threshold
-		}
-		e.Value = target.Value
-		monitorData.HTTP[target.Address] = e
-	}
-
-	// remove deleted http hosts from monitoring
-	for k := range monitorData.HTTP {
-		found := false
-		for _, c := range getConfig().Monitor.HTTP.Targets {
-			if k == c.Address {
-				found = true
-				break
-			}
-		}
-		if !found {
-			delete(monitorData.HTTP, k)
-		}
-	}
-
-	// update monitored exec targets
-	for _, target := range getConfig().Monitor.Exec.Targets {
-
-		e, ok := monitorData.Exec[target.Command]
-		if !ok {
-			monitorData.Exec[target.Command] = &ExecMonitorData{}
-			e = monitorData.Exec[target.Command]
-		}
-		e.Name = target.Name
-		if target.Interval != 0 {
-			e.Interval = target.Interval
-		} else {
-			e.Interval = getConfig().Monitor.Exec.Interval
-		}
-		if target.Timeout != 0 {
-			e.Timeout = target.Timeout
-		} else {
-			e.Timeout = getConfig().Monitor.Exec.Timeout
-		}
-		if target.Threshold != 0 {
-			e.Threshold = target.Threshold
-		} else {
-			e.Threshold = getConfig().Monitor.Exec.Threshold
-		}
-		monitorData.Exec[target.Command] = e
-	}
-
-	// remove deleted exec targets from monitoring
-	for k := range monitorData.Exec {
-		found := false
-		for _, c := range getConfig().Monitor.Exec.Targets {
-			if k == c.Command {
-				found = true
-				break
-			}
-		}
-		if !found {
-			delete(monitorData.Exec, k)
-		}
-	}
-	monitorData.Unlock()
-
-	// Disconnect MQTT clients that are no longer configured, and reconnect when
-	// the configured broker changes.
+	// Reconnect the monitoring and alerting MQTT clients independently so that a
+	// slow Telegram or MQTT connection cannot block the other integration.
+	monitorMqttMu.Lock()
 	if getConfig().Monitor.MQTT.Server == "" {
 		if monitorMqttClient != nil {
 			if monitorMqttClient.IsConnected() {
@@ -583,7 +508,21 @@ func loadConfig() bool {
 			}
 			monitorMqttClient = nil
 		}
+	} else {
+		if monitorMqttClient != nil && monitorMqttClient.IsConnected() {
+			monitorMqttClient.Disconnect(1)
+			debug("Disconnected from MQTT (monitoring)")
+		}
+		connectMqtt()
 	}
+	monitorMqttMu.Unlock()
+
+	// connect Telegram if configured
+	if getConfig().Alert.Telegram.Token != "" && getConfig().Alert.Telegram.Chat != 0 {
+		connectTelegram()
+	}
+
+	alertMqttMu.Lock()
 	if getConfig().Alert.MQTT.Server == "" || getConfig().Alert.MQTT.Topic == "" {
 		if alertMqttClient != nil {
 			if alertMqttClient.IsConnected() {
@@ -591,38 +530,26 @@ func loadConfig() bool {
 			}
 			alertMqttClient = nil
 		}
-	}
-
-	// connect MQTT if configured
-	if getConfig().Monitor.MQTT.Server != "" {
-		if monitorMqttClient != nil && monitorMqttClient.IsConnected() {
-			monitorMqttClient.Disconnect(1)
-			debug("Disconnected from MQTT (monitoring)")
-		}
-
-		connectMqtt()
-	}
-
-	// connect Telegram if configured
-	if getConfig().Alert.Telegram.Token != "" && getConfig().Alert.Telegram.Chat != 0 {
-		connectTelegram()
-	}
-
-	// connect MQTT alert topic if configured
-	if getConfig().Alert.MQTT.Server != "" && getConfig().Alert.MQTT.Topic != "" {
+	} else {
 		if alertMqttClient != nil && alertMqttClient.IsConnected() {
 			alertMqttClient.Disconnect(1)
 			debug("Disconnected from MQTT (alerting)")
 		}
 		connectMqttAlert()
-
 	}
+	alertMqttMu.Unlock()
 	return true
 }
 
 func connectTelegram() {
+	telegramMu.Lock()
+	defer telegramMu.Unlock()
+	connectTelegramLocked(getConfig())
+}
+
+func connectTelegramLocked(c *Config) {
 	var err error
-	tgbot, err = tgbotapi.NewBotAPI(getConfig().Alert.Telegram.Token)
+	tgbot, err = tgbotapi.NewBotAPIWithClient(c.Alert.Telegram.Token, tgbotapi.APIEndpoint, &http.Client{Timeout: 10 * time.Second})
 	if err != nil {
 		log("Unable to connect to Telegram: " + err.Error())
 	} else {
@@ -632,6 +559,7 @@ func connectTelegram() {
 
 func connectMqtt() {
 	opts := mqtt.NewClientOptions()
+	opts.SetConnectTimeout(5 * time.Second)
 	opts.AddBroker(fmt.Sprintf("%s:%d", getConfig().Monitor.MQTT.Server, getConfig().Monitor.MQTT.Port))
 	opts.SetUsername(getConfig().Monitor.MQTT.User)
 	opts.SetPassword(getConfig().Monitor.MQTT.Password)
@@ -676,6 +604,7 @@ func connectMqtt() {
 
 func connectMqttAlert() {
 	opts := mqtt.NewClientOptions()
+	opts.SetConnectTimeout(5 * time.Second)
 	opts.AddBroker(fmt.Sprintf("%s:%d", getConfig().Alert.MQTT.Server, getConfig().Alert.MQTT.Port))
 	opts.SetUsername(getConfig().Alert.MQTT.User)
 	opts.SetPassword(getConfig().Alert.MQTT.Password)
@@ -689,20 +618,26 @@ func connectMqttAlert() {
 
 // finds a custom name in the configuration for a given topic
 func findTopicName(topic string) string {
-	for _, t := range getConfig().Monitor.MQTT.Targets {
-		if t.Topic == topic && t.Name != "" {
-			return t.Name
-		}
-	}
-	return topic
+	return topicName(getConfig(), topic)
 }
 
 // Receives an MQTT message and updates status accordingly.
 func onMessageReceived(client mqtt.Client, message mqtt.Message) {
+	callbackMu.Lock()
+	if stopping.Load() {
+		callbackMu.Unlock()
+		return
+	}
+	mqttCallbacks.Add(1)
+	callbackMu.Unlock()
+	defer mqttCallbacks.Done()
 	debug("MQTT: " + message.Topic() + ": " + string(message.Payload()))
 
 	monitorData.Lock()
-	defer monitorData.Unlock()
+	if !mqttTopicConfigured(getConfig(), message.Topic()) {
+		monitorData.Unlock()
+		return
+	}
 
 	e, ok := monitorData.MQTT[message.Topic()]
 	if !ok {
@@ -712,12 +647,13 @@ func onMessageReceived(client mqtt.Client, message mqtt.Message) {
 	}
 
 	if e.Deleted {
+		monitorData.Unlock()
 		return
 	}
 
 	e.History = append(e.History, TimedEntry{time.Now(), string(message.Payload())})
 	if len(e.History) > getConfig().Monitor.MQTT.History {
-		e.History = e.History[1:]
+		e.History = e.History[len(e.History)-getConfig().Monitor.MQTT.History:]
 	}
 
 	if len(e.History) > 1 {
@@ -734,41 +670,44 @@ func onMessageReceived(client mqtt.Client, message mqtt.Message) {
 	}
 	e.LastSeen = time.Now()
 	e.LastPayload = string(message.Payload())
-	e.Samples++
+	now := time.Now()
+	e.SampleDays = recordBucket(e.SampleDays, now)
+	e.Samples = e.SampleDays.total(now)
+	monitorData.Unlock()
+	persistState()
 
 }
 
 // Launch infinite loops for monitoring and alerting.
-func monitoringLoop() {
+var monitoringContext = context.Background()
+
+// Returns a stop function which cancels in-flight checks and waits for every
+// monitoring producer to finish before the database is closed.
+func monitoringLoop() func() {
 	debug("Entering monitoring loop")
-	go func() {
-		for {
-			evaluateMQTT()
-			time.Sleep(time.Second)
-		}
-	}()
-
-	go func() {
-		for {
-			checkPing()
-			time.Sleep(time.Second)
-		}
-	}()
-
-	go func() {
-		for {
-			checkHTTP()
-			time.Sleep(time.Second)
-		}
-	}()
-
-	go func() {
-		for {
-			checkExec()
-			time.Sleep(time.Second)
-		}
-	}()
-
+	ctx, cancel := context.WithCancel(context.Background())
+	monitoringContext = ctx
+	var workers sync.WaitGroup
+	for _, check := range []func(){evaluateMQTT, checkPing, checkHTTP, checkExec} {
+		workers.Add(1)
+		go func(check func()) {
+			defer workers.Done()
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				check()
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}(check)
+	}
+	return func() { cancel(); workers.Wait() }
 }
 
 type pendingAlert struct {
@@ -782,16 +721,23 @@ type pendingAlert struct {
 // Periodically evaluate MQTT monitoring targets and issue alerts/recoveries as needed.
 func evaluateMQTT() {
 
-	// Attempt MQTT connection if configured but not connected
-	if getConfig().Monitor.MQTT.Server != "" {
+	monitorMqttMu.Lock()
+	if !stopping.Load() && getConfig().Monitor.MQTT.Server != "" {
 		if monitorMqttClient == nil || !monitorMqttClient.IsConnected() {
 			connectMqtt()
 		}
 	}
+	monitorMqttMu.Unlock()
 
+	evaluateMQTTState()
+}
+
+// Evaluate state without initiating a broker connection from a web edit.
+func evaluateMQTTState() {
 	monitorData.Lock()
 
 	var alerts []pendingAlert
+	changed := false
 
 	for topic, v := range monitorData.MQTT {
 
@@ -799,7 +745,23 @@ func evaluateMQTT() {
 			continue
 		}
 
-		elapsed := time.Since(v.LastSeen).Seconds()
+		previousStatus := v.Status
+		now := time.Now()
+		// Measure silence from the loaded epoch so a restored database does not
+		// immediately report every topic as timed out.
+		lastSeen := v.LastSeen
+		if lastSeen.Before(stateEpoch) {
+			lastSeen = stateEpoch
+		}
+		elapsed := now.Sub(lastSeen).Seconds()
+
+		previousSamples := v.Samples
+		v.Samples = v.SampleDays.total(now)
+		changed = changed || previousSamples != v.Samples
+
+		// active is true once a message arrived since this state was (re)loaded.
+		// Until then, keep the restored status rather than reporting a recovery.
+		active := v.LastSeen.After(stateEpoch)
 
 		var timeout float64
 		// use overridden timeout if specified
@@ -821,16 +783,19 @@ func evaluateMQTT() {
 
 		// no timeout can be determined yet (single sample or no config) -> skip
 		if math.IsNaN(timeout) || timeout == 0 {
+			monitorData.MQTT[topic] = v
 			continue
 		}
 
 		if elapsed > timeout {
 			if v.Status != STATUS_ERROR {
-				alerts = append(alerts, pendingAlert{"MQTT", v.Name, STATUS_ERROR, v.LastSeen, fmt.Sprintf("timeout %.2fs", timeout)})
+				alerts = append(alerts, pendingAlert{"MQTT", v.Name, STATUS_ERROR, lastSeen, fmt.Sprintf("timeout %.2fs", timeout)})
 				v.LastError = time.Now()
 				v.Alerts++
 			}
 			v.Status = STATUS_ERROR
+		} else if !active {
+			// Restored state without new activity: hold the previous status.
 		} else if v.AvgTransmit > 0 && elapsed > v.AvgTransmit {
 			v.Status = STATUS_WARN
 		} else {
@@ -839,10 +804,14 @@ func evaluateMQTT() {
 			}
 			v.Status = STATUS_OK
 		}
+		changed = changed || previousStatus != v.Status
 		monitorData.MQTT[topic] = v
 	}
 
 	monitorData.Unlock()
+	if changed {
+		persistState()
+	}
 
 	for _, a := range alerts {
 		alert(a.sensorType, a.sensorName, a.status, a.since, a.msg)
@@ -886,6 +855,7 @@ func checkPing() {
 		timeout  int
 	}
 	monitorData.RLock()
+	generation := monitorGeneration
 	var toCheck []pingEntry
 	for address, e := range monitorData.Ping {
 		if e.Timestamp.Add(time.Duration(e.Interval) * time.Second).Before(time.Now()) {
@@ -897,15 +867,20 @@ func checkPing() {
 	for _, entry := range toCheck {
 		address := entry.address
 		r := ping(address)
+		if monitoringContext.Err() != nil {
+			return
+		}
 		debug(fmt.Sprintf("Pinging %s: %t", address, r))
 
 		var pending []pendingAlert
 		monitorData.Lock()
 		e, ok := monitorData.Ping[address]
+		ok = ok && generation == monitorGeneration
 		if ok {
-			e.Timestamp = time.Now()
+			now := time.Now()
+			e.Timestamp = now
 			if r {
-				e.TotalOK++
+				e.OKDays = recordBucket(e.OKDays, now)
 				e.LastOK = time.Now()
 				e.Errors = 0
 				if e.Status == STATUS_ERROR {
@@ -914,7 +889,7 @@ func checkPing() {
 				e.Status = STATUS_OK
 			} else {
 				e.Errors++
-				e.TotalError++
+				e.ErrorDays = recordBucket(e.ErrorDays, now)
 				e.LastError = time.Now()
 				if e.Status == STATUS_OK {
 					e.Status = STATUS_WARN
@@ -925,8 +900,13 @@ func checkPing() {
 					e.LastErrorStart = time.Now()
 				}
 			}
+			e.TotalOK = e.OKDays.total(now)
+			e.TotalError = e.ErrorDays.total(now)
 		}
 		monitorData.Unlock()
+		if ok {
+			persistState()
+		}
 		for _, a := range pending {
 			alert(a.sensorType, a.sensorName, a.status, a.since, a.msg)
 		}
@@ -941,6 +921,7 @@ func checkHTTP() {
 		timeout int
 	}
 	monitorData.RLock()
+	generation := monitorGeneration
 	var toCheck []httpEntry
 	for address, e := range monitorData.HTTP {
 		if e.Timestamp.Add(time.Duration(e.Interval) * time.Second).Before(time.Now()) {
@@ -952,15 +933,20 @@ func checkHTTP() {
 	for _, entry := range toCheck {
 		address := entry.address
 		r, errStr, val := performHTTPCheck(address, entry.value, entry.timeout)
+		if monitoringContext.Err() != nil {
+			return
+		}
 		debug(fmt.Sprintf("HTTP request %s: %t %s", address, r, errStr))
 
 		var pending []pendingAlert
 		monitorData.Lock()
 		e, ok := monitorData.HTTP[address]
+		ok = ok && generation == monitorGeneration
 		if ok {
-			e.Timestamp = time.Now()
+			now := time.Now()
+			e.Timestamp = now
 			if r {
-				e.TotalOK++
+				e.OKDays = recordBucket(e.OKDays, now)
 				e.LastOK = time.Now()
 				e.LastValue = val
 				e.Errors = 0
@@ -970,7 +956,7 @@ func checkHTTP() {
 				e.Status = STATUS_OK
 			} else {
 				e.Errors++
-				e.TotalError++
+				e.ErrorDays = recordBucket(e.ErrorDays, now)
 				e.LastError = time.Now()
 				e.LastErrorValue = errStr
 				if e.Status == STATUS_OK {
@@ -982,8 +968,13 @@ func checkHTTP() {
 					e.LastErrorStart = time.Now()
 				}
 			}
+			e.TotalOK = e.OKDays.total(now)
+			e.TotalError = e.ErrorDays.total(now)
 		}
 		monitorData.Unlock()
+		if ok {
+			persistState()
+		}
 		for _, a := range pending {
 			alert(a.sensorType, a.sensorName, a.status, a.since, a.msg)
 		}
@@ -997,6 +988,7 @@ func checkExec() {
 		timeout int
 	}
 	monitorData.RLock()
+	generation := monitorGeneration
 	var toCheck []execEntry
 	for command, e := range monitorData.Exec {
 		if e.Timestamp.Add(time.Duration(e.Interval) * time.Second).Before(time.Now()) {
@@ -1008,14 +1000,19 @@ func checkExec() {
 	for _, entry := range toCheck {
 		command := entry.command
 		r := performExecCheck(command, entry.timeout)
+		if monitoringContext.Err() != nil {
+			return
+		}
 
 		var pending []pendingAlert
 		monitorData.Lock()
 		e, ok := monitorData.Exec[command]
+		ok = ok && generation == monitorGeneration
 		if ok {
-			e.Timestamp = time.Now()
+			now := time.Now()
+			e.Timestamp = now
 			if r {
-				e.TotalOK++
+				e.OKDays = recordBucket(e.OKDays, now)
 				e.LastOK = time.Now()
 				e.Errors = 0
 				if e.Status == STATUS_ERROR {
@@ -1024,7 +1021,7 @@ func checkExec() {
 				e.Status = STATUS_OK
 			} else {
 				e.Errors++
-				e.TotalError++
+				e.ErrorDays = recordBucket(e.ErrorDays, now)
 				e.LastError = time.Now()
 				if e.Status == STATUS_OK {
 					e.Status = STATUS_WARN
@@ -1035,8 +1032,13 @@ func checkExec() {
 					e.LastErrorStart = time.Now()
 				}
 			}
+			e.TotalOK = e.OKDays.total(now)
+			e.TotalError = e.ErrorDays.total(now)
 		}
 		monitorData.Unlock()
+		if ok {
+			persistState()
+		}
 		for _, a := range pending {
 			alert(a.sensorType, a.sensorName, a.status, a.since, a.msg)
 		}
@@ -1046,7 +1048,7 @@ func checkExec() {
 // Perform exec check for a single target.
 // Return false in case of error or timeout.
 func performExecCheck(command string, timeout int) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Millisecond)
+	ctx, cancel := context.WithTimeout(monitoringContext, time.Duration(timeout)*time.Millisecond)
 	defer cancel()
 
 	var cmd *exec.Cmd
@@ -1055,6 +1057,8 @@ func performExecCheck(command string, timeout int) bool {
 	} else {
 		cmd = exec.CommandContext(ctx, "sh", "-c", command)
 	}
+	// A descendant may inherit stdout even after the shell is killed.
+	cmd.WaitDelay = 250 * time.Millisecond
 	out, err := cmd.Output()
 	debug(fmt.Sprintf("Exec %s output: %s", command, out))
 	if ctx.Err() == context.DeadlineExceeded {
@@ -1078,7 +1082,11 @@ func performHTTPCheck(url string, pattern string, timeout int) (bool, string, st
 	client := http.Client{
 		Timeout: time.Millisecond * time.Duration(timeout),
 	}
-	resp, err := client.Get(url)
+	req, err := http.NewRequestWithContext(monitoringContext, http.MethodGet, url, nil)
+	if err != nil {
+		return false, err.Error(), ""
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		errValue = err.Error()
 	} else {
@@ -1107,10 +1115,14 @@ func performHTTPCheck(url string, pattern string, timeout int) (bool, string, st
 // Returns false if ping exits with error code or with "Destination host unreachable".
 // Returns true in case of successful ping.
 func ping(host string) bool {
-	cmd := exec.Command("ping", "-c", "1", host)
+	ctx, cancel := context.WithTimeout(monitoringContext, 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ping", "-c", "1", host)
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("ping", "-n", "1", host)
+		cmd = exec.CommandContext(ctx, "ping", "-n", "1", host)
 	}
+	// A descendant may inherit stdout even after the shell is killed.
+	cmd.WaitDelay = 250 * time.Millisecond
 	out, err := cmd.Output()
 	if err != nil || strings.Contains(string(out), "Destination host unreachable") {
 		return false
@@ -1131,6 +1143,7 @@ func log(s string) {
 		logHistory = logHistory[:getConfig().LogSize]
 	}
 	logLock.Unlock()
+	persistState()
 }
 
 // Omits a debug log entry, if debug logging is enabled.
@@ -1318,204 +1331,6 @@ func reloadConfig(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// Deletes an item from monitoring. MQTT topics will not be deleted from the config due to possible wildcard subscriptions,
-// but a Deleted flag will be set instead, and the topic will be deleted only upon configuration reload. Other targets will
-// be deleted directly from the configuration and the monitoring data as well.
-func deleteWebItem(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	debug(fmt.Sprintf("Web request %s from %s: %+v", r.RequestURI, r.RemoteAddr, r.Form))
-
-	monitorData.Lock()
-	defer monitorData.Unlock()
-
-	if len(r.Form["type"]) > 0 && len(r.Form["name"]) > 0 {
-		f := r.Form["name"][0]
-		switch r.Form["type"][0] {
-		case "mqtt":
-			if _, ok := monitorData.MQTT[f]; ok {
-				monitorData.MQTT[f].Deleted = true
-			}
-		case "ping":
-			for k, v := range getConfig().Monitor.Ping.Targets {
-				if v.Address == f {
-					configLock.Lock()
-					config.Monitor.Ping.Targets = append(config.Monitor.Ping.Targets[:k], config.Monitor.Ping.Targets[k+1:]...)
-					configLock.Unlock()
-					break
-				}
-			}
-			delete(monitorData.Ping, f)
-		case "http":
-			for k, v := range getConfig().Monitor.HTTP.Targets {
-				if v.Address == f {
-					configLock.Lock()
-					config.Monitor.HTTP.Targets = append(config.Monitor.HTTP.Targets[:k], config.Monitor.HTTP.Targets[k+1:]...)
-					configLock.Unlock()
-					break
-				}
-			}
-			delete(monitorData.HTTP, f)
-
-		case "exec":
-			for k, v := range getConfig().Monitor.Exec.Targets {
-				if v.Command == f {
-					configLock.Lock()
-					config.Monitor.Exec.Targets = append(config.Monitor.Exec.Targets[:k], config.Monitor.Exec.Targets[k+1:]...)
-					configLock.Unlock()
-					break
-				}
-			}
-			delete(monitorData.Exec, f)
-		}
-
-	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
-// Set parameters on monitored entries from web.
-func configWebItem(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	debug(fmt.Sprintf("Web request %s from %s: %+v", r.RequestURI, r.RemoteAddr, r.Form))
-
-	if len(r.Form["type"]) > 0 && len(r.Form["name"]) > 0 {
-		f := r.Form["name"][0]
-		switch r.Form["type"][0] {
-		case "mqtt":
-			if len(r.Form["timeout"]) > 0 {
-				if v, err := strconv.ParseFloat(r.Form["timeout"][0], 64); err != nil {
-					log("Unable to parse requested timeout: " + r.Form["timeout"][0])
-				} else {
-					monitorData.Lock()
-					if _, ok := monitorData.MQTT[f]; ok {
-						monitorData.MQTT[f].CustomTimeout = v
-					}
-					monitorData.Unlock()
-					evaluateMQTT()
-				}
-			}
-		case "ping":
-			if len(r.Form["interval"]) > 0 {
-				if v, err := strconv.ParseUint(r.Form["interval"][0], 10, 64); err != nil {
-					log("Unable to parse requested interval: " + r.Form["interval"][0])
-				} else {
-					if v == 0 {
-						v = uint64(getConfig().Monitor.Ping.Interval)
-					}
-					monitorData.Lock()
-					if _, ok := monitorData.Ping[f]; ok {
-						monitorData.Ping[f].Interval = int(v)
-					}
-					monitorData.Unlock()
-				}
-			}
-			if len(r.Form["threshold"]) > 0 {
-				if v, err := strconv.ParseUint(r.Form["threshold"][0], 10, 64); err != nil {
-					log("Unable to parse requested threshold: " + r.Form["threshold"][0])
-				} else {
-					if v == 0 {
-						v = uint64(getConfig().Monitor.Ping.Threshold)
-					}
-					monitorData.Lock()
-					if _, ok := monitorData.Ping[f]; ok {
-						monitorData.Ping[f].Threshold = int(v)
-					}
-					monitorData.Unlock()
-				}
-			}
-
-		case "http":
-			if len(r.Form["interval"]) > 0 {
-				if v, err := strconv.ParseUint(r.Form["interval"][0], 10, 64); err != nil {
-					log("Unable to parse requested interval: " + r.Form["interval"][0])
-				} else {
-					if v == 0 {
-						v = uint64(getConfig().Monitor.HTTP.Interval)
-					}
-					monitorData.Lock()
-					if _, ok := monitorData.HTTP[f]; ok {
-						monitorData.HTTP[f].Interval = int(v)
-					}
-					monitorData.Unlock()
-				}
-			}
-			if len(r.Form["timeout"]) > 0 {
-				if v, err := strconv.ParseUint(r.Form["timeout"][0], 10, 64); err != nil {
-					log("Unable to parse requested timeout: " + r.Form["timeout"][0])
-				} else {
-					if v == 0 {
-						v = uint64(getConfig().Monitor.HTTP.Timeout)
-					}
-					monitorData.Lock()
-					if _, ok := monitorData.HTTP[f]; ok {
-						monitorData.HTTP[f].Timeout = int(v)
-					}
-					monitorData.Unlock()
-				}
-			}
-			if len(r.Form["threshold"]) > 0 {
-				if v, err := strconv.ParseUint(r.Form["threshold"][0], 10, 64); err != nil {
-					log("Unable to parse requested threshold: " + r.Form["threshold"][0])
-				} else {
-					if v == 0 {
-						v = uint64(getConfig().Monitor.HTTP.Threshold)
-					}
-					monitorData.Lock()
-					if _, ok := monitorData.HTTP[f]; ok {
-						monitorData.HTTP[f].Threshold = int(v)
-					}
-					monitorData.Unlock()
-				}
-			}
-
-		case "exec":
-			if len(r.Form["interval"]) > 0 {
-				if v, err := strconv.ParseUint(r.Form["interval"][0], 10, 64); err != nil {
-					log("Unable to parse requested interval: " + r.Form["interval"][0])
-				} else {
-					if v == 0 {
-						v = uint64(getConfig().Monitor.Exec.Interval)
-					}
-					monitorData.Lock()
-					if _, ok := monitorData.Exec[f]; ok {
-						monitorData.Exec[f].Interval = int(v)
-					}
-					monitorData.Unlock()
-				}
-			}
-			if len(r.Form["timeout"]) > 0 {
-				if v, err := strconv.ParseUint(r.Form["timeout"][0], 10, 64); err != nil {
-					log("Unable to parse requested timeout: " + r.Form["timeout"][0])
-				} else {
-					if v == 0 {
-						v = uint64(getConfig().Monitor.Exec.Timeout)
-					}
-					monitorData.Lock()
-					if _, ok := monitorData.Exec[f]; ok {
-						monitorData.Exec[f].Timeout = int(v)
-					}
-					monitorData.Unlock()
-				}
-			}
-			if len(r.Form["threshold"]) > 0 {
-				if v, err := strconv.ParseUint(r.Form["threshold"][0], 10, 64); err != nil {
-					log("Unable to parse requested threshold: " + r.Form["threshold"][0])
-				} else {
-					if v == 0 {
-						v = uint64(getConfig().Monitor.Exec.Threshold)
-					}
-					monitorData.Lock()
-					if _, ok := monitorData.Exec[f]; ok {
-						monitorData.Exec[f].Threshold = int(v)
-					}
-					monitorData.Unlock()
-				}
-			}
-
-		}
-	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
 // Published an alert message via the methods configured.
 func alert(sensorType string, sensorName string, status int, since time.Time, msg string) {
 
@@ -1534,34 +1349,48 @@ func alert(sensorType string, sensorName string, status int, since time.Time, ms
 
 	log(s)
 
-	if getConfig().Alert.Telegram.Token != "" && getConfig().Alert.Telegram.Chat != 0 {
+	c := getConfig()
+	if c.Alert.Telegram.Token != "" && c.Alert.Telegram.Chat != 0 {
+		telegramMu.Lock()
 		if tgbot == nil {
-			connectTelegram()
+			connectTelegramLocked(c)
 		}
 		if tgbot != nil {
-			if _, err := tgbot.Send(tgbotapi.NewMessage(getConfig().Alert.Telegram.Chat, s)); err != nil {
+			if _, err := tgbot.Send(tgbotapi.NewMessage(c.Alert.Telegram.Chat, s)); err != nil {
 				log("Error sending to telegram: " + err.Error())
 			}
 		}
+		telegramMu.Unlock()
 	}
-	if getConfig().Alert.Gotify.Token != "" && getConfig().Alert.Gotify.Server != "" {
-		if _, err := http.PostForm(getConfig().Alert.Gotify.Server+"/message?token="+getConfig().Alert.Gotify.Token,
-			url.Values{"message": {s}, "title": {"Janitor alert"}}); err != nil {
+	if c.Alert.Gotify.Token != "" && c.Alert.Gotify.Server != "" {
+		form := url.Values{"message": {s}, "title": {"Janitor alert"}}
+		req, err := http.NewRequestWithContext(monitoringContext, http.MethodPost, c.Alert.Gotify.Server+"/message?token="+c.Alert.Gotify.Token, strings.NewReader(form.Encode()))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			var resp *http.Response
+			resp, err = (&http.Client{Timeout: 10 * time.Second}).Do(req)
+			if resp != nil {
+				resp.Body.Close()
+			}
+		}
+		if err != nil {
 			log("Error in Gotify request: " + err.Error())
 		}
 	}
-	if getConfig().Alert.Exec != "" {
-		cmd := exec.Command("sh", "-c", getConfig().Alert.Exec)
+	if c.Alert.Exec != "" {
+		cmd := exec.CommandContext(monitoringContext, "sh", "-c", c.Alert.Exec)
 		if runtime.GOOS == "windows" {
-			cmd = exec.Command(getConfig().Alert.Exec)
+			cmd = exec.CommandContext(monitoringContext, c.Alert.Exec)
 		}
 		cmd.Stdin = strings.NewReader(s)
 		if err := cmd.Run(); err != nil {
-			log("Error in executing " + getConfig().Alert.Exec + ": " + err.Error())
+			log("Error in executing " + c.Alert.Exec + ": " + err.Error())
 		}
 	}
 
 	// construct and post json payload for MQTT target
+	alertMqttMu.Lock()
+	defer alertMqttMu.Unlock()
 	if getConfig().Alert.MQTT.Server != "" && getConfig().Alert.MQTT.Topic != "" {
 		if alertMqttClient == nil || !alertMqttClient.IsConnected() {
 			connectMqttAlert()
@@ -1579,7 +1408,9 @@ func alert(sensorType string, sensorName string, status int, since time.Time, ms
 				log("Unable to compile payload for MQTT alert: " + err.Error())
 				return
 			}
-			if token := alertMqttClient.Publish(getConfig().Alert.MQTT.Topic, 0, false, b); token.Wait() && token.Error() != nil {
+			if token := alertMqttClient.Publish(getConfig().Alert.MQTT.Topic, 0, false, b); !token.WaitTimeout(5 * time.Second) {
+				log("Timeout publishing MQTT alert")
+			} else if token.Error() != nil {
 				log("Unable to publish MQTT alert: " + token.Error().Error())
 			}
 		}
